@@ -1,0 +1,25 @@
+{
+  "name": "byazen",
+  "productName": "ByAzen",
+  "version": "1.0.0",
+  "description": "Персональный игровой лаунчер",
+  "author": "ByAzen",
+  "private": true,
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "node scripts/preview.cjs",
+    "test": "node --test",
+    "build:win": "electron-builder --win portable --x64"
+  },
+  "dependencies": { "cheerio": "1.2.0", "ipaddr.js": "2.3.0" },
+  "devDependencies": { "electron": "45.4.1", "electron-builder": "26.18.0", "@fontsource-variable/inter": "5.2.8" },
+  "build": {
+    "appId": "com.byazen.launcher",
+    "directories": {"output": "release"},
+    "files": ["desktop/**", "core/**", "public/**", "package.json"],
+    "win": {"target": [{"target":"portable","arch":["x64"]}], "artifactName": "ByAzen-${version}-win-x64-portable.exe", "signAndEditExecutable": false},
+    "portable": {"requestExecutionLevel":"user"},
+    "asar": true
+  }
+}
