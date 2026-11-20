@@ -5,7 +5,7 @@ const {pipeline} = require('node:stream/promises');
 const {searchSteam} = require('../core/steam.cjs');
 const {parseSource, MAX_JSON} = require('../core/sources.cjs');
 const root = path.resolve(__dirname,'../public');
-const mime = {'.html':'text/html; charset=UTF-8','.css':'text/css; charset=UTF-8','.js':'text/javascript; charset=UTF-8','.svg':'image/svg+xml','.jpg':'image/jpeg','.woff2':'font/woff2'};
+const mime = {'.html':'text/html; charset=UTF-8','.css':'text/css; charset=UTF-8','.js':'text/javascript; charset=UTF-8','.svg':'image/svg+xml','.jpg':'image/jpeg','.png':'image/png','.woff2':'font/woff2'};
 let activeSteam = 0;
 http.createServer(async (req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');

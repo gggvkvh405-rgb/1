@@ -30,6 +30,8 @@ async function bootstrap() {
     saveSettings: (x) => { data.settings = updateSettings(x); persist(); return data.settings; },
     steam: searchSteam,
     openSteam: async raw => { const safe = officialProduct(raw); if (!safe) throw Error('Недопустимая страница Steam.'); await shell.openExternal(safe); },
+    openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
+    openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
     sources: () => sourcesSummary(data.sources),
     previewFile: async () => {
       const {filePaths:[file]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Hydra JSON',extensions:['json']}]});
@@ -119,7 +121,7 @@ async function bootstrap() {
     try { return {value:await actions[action](...args)}; }
     catch (e) { return {error:e.message || 'Не удалось выполнить действие.'}; }
   });
-  window = new BrowserWindow({width:1440,height:900,minWidth:720,minHeight:480,show:false,backgroundColor:'#101016',title:'ByAzen',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});
+  window = new BrowserWindow({width:1440,height:900,minWidth:720,minHeight:480,show:false,backgroundColor:'#101010',title:'ByAzen',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});
   window.webContents.setWindowOpenHandler(() => ({action:'deny'}));
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});

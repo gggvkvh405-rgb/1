@@ -1,10 +1,10 @@
 import {icon as I} from './icons.js';
-import {games,regions} from './games.js';
+import {games,regions,weeklyGames,achievements} from './games.js';
 import {browser} from './browser.js';
 const api = window.byazen || browser;
 const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
-const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],sources:['Источники','layers'],settings:['Настройки','settings']};
+const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
 const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,themePage:0};
 let renderId=0;
@@ -15,35 +15,42 @@ const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria
 const current = (n)=>n===renderId;
 function toast(text,error=false){const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>x.remove(),4300);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
-function showDialog(title,body){if(dialog.open)dialog.close();dialogBody.innerHTML=`<div class="dialog-head"><h2>${title}</h2><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();}
+function showDialog(title,body){if(dialog.open)dialog.close();dialogBody.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${title}</h2><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
 function sidebar(){
- $('#nav').innerHTML=Object.entries(sections).map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span>${state.section===id?I('chevron','nav-chevron'):''}</button>`).join('');
- const initial=esc(Array.from(state.settings.name)[0]?.toUpperCase()||'И');
- $('#profile').innerHTML=`<span class="avatar">${initial}<i></i></span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>Локальный профиль</small></span>${I('down','profile-arrow')}`;
- $('#top-profile').innerHTML=initial;
- $('#crumb').innerHTML=`<span>Рабочая область</span>${I('chevron')}<strong>${sections[state.section][0]}</strong>`;
- $('#side-games').innerHTML=state.library.length ? [...state.library].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||(b.lastPlayed||'').localeCompare(a.lastPlayed||'')).slice(0,5).map(g=>`<button class="side-game" data-action="edit-game" data-id="${esc(g.id)}" title="${esc(g.title)}">${I('game')}<span>${esc(g.title)}</span></button>`).join('') : `<button class="side-game muted" data-action="new-game" title="Добавить игру">${I('game')}<span>Добавить игру</span></button>`;
+ $('#nav').innerHTML=Object.entries(sections).filter(([id])=>id!=='sources').map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
+ const shortcut=$('#source-shortcut');
+ if(state.section==='sources')shortcut.setAttribute('aria-current','page');else shortcut.removeAttribute('aria-current');
+ $('#profile').innerHTML=`<span class="avatar">${I('user')}</span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>ByAzen</small></span><img class="profile-brand" src="assets/logo.svg" alt="">${I('down','profile-arrow')}`;
+ $('#side-games').innerHTML=state.library.length ? [...state.library].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||(b.lastPlayed||'').localeCompare(a.lastPlayed||'')).slice(0,6).map(g=>`<button class="side-game" data-action="edit-game" data-id="${esc(g.id)}" title="${esc(g.title)}">${I('game')}<span>${esc(g.title)}</span></button>`).join('') : `<button class="side-game muted" data-action="new-game" title="Добавить игру">${I('plus')}<span>Добавить игру</span></button>`;
 }
-function go(section){if(!sections[section])return;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();run(render);}
-async function render(){let n=++renderId; return ({home,catalog,library,downloads,sources,settings}[state.section])(n);}
+function go(section){if(!Object.hasOwn(sections,section))return;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();run(render);}
+async function render(){let n=++renderId;content.dataset.section=state.section;return ({home,catalog,library,downloads,rankings,sources,settings}[state.section])(n);}
 function rangeButtons(result,prefix){const last=Math.max(1,Math.min(500,Math.ceil(result.total/result.pageSize)));return `<div class="pagination"><button class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page} из ${last}</span><button class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;}
-const homeTabs=[['flame','Популярное'],['spark','Открытые миры'],['trophy','Ролевые игры']];
+const homeTabs=[['flame','Сейчас популярно'],['calendar','Лучшие игры недели'],['trophy','Игры с достижениями']];
 function home(n){
- const f=games[state.featured], index=state.featured;
- const rows=state.tab===1?games.filter(g=>g.genre==='Открытый мир'):state.tab===2?games.filter(g=>g.genre==='Ролевая игра'):games;
- content.innerHTML=`${head('ИГРОВОЙ ЦЕНТР','Главная','Открывайте новые игры и управляйте своей коллекцией.')}
- <section class="hero ${index===0?'cyber-hero':''}" aria-label="Избранная игра">
-  <img class="hero-image" src="assets/${index===0?'hero':f.image}.jpg" alt="">
-  <div class="hero-shade"></div><div class="hero-copy"><span class="hero-label">${I('spark')} ВЫБОР РЕДАКЦИИ</span>
-   <div class="hero-title" aria-label="${esc(f.title)}">${esc(f.headline)}${index===0?'<span>2077</span>':''}</div>
-   <p>${esc(f.desc)}</p><div class="hero-actions">${btn('Открыть в Steam',`steam-${f.id}`,'steam','hero-btn')}${btn('Следующая','next-hero','arrow','hero-next')}</div>
-  </div><div class="hero-count"><span>${String(index+1).padStart(2,'0')}</span><i></i>${String(games.length).padStart(2,'0')}</div>
+ const f=games[state.featured], cyber=state.featured===0;
+ const rows=state.tab===1?weeklyGames():state.tab===2?games.filter(g=>achievements.has(g.id)):games;
+ content.innerHTML=`<section class="hero ${cyber?'cyber-hero':'alt-hero'}" aria-label="Избранная игра">
+  <img class="hero-image" src="assets/${cyber?'hero':f.image}.jpg" alt="">
+  <button class="hero-link" data-action="steam-${f.id}" title="Открыть в Steam" aria-label="${esc(f.title)} — открыть в Steam"></button>
+  <div class="hero-copy"><h1>${cyber?'<img src="assets/cyberpunk-logo.png" alt="Cyberpunk 2077">':esc(f.headline)}</h1><p>${esc(f.desc)}</p></div>
  </section>
- <div class="discovery"><div class="tabs" aria-label="Подборки">${homeTabs.map(([glyph,name],j)=>`<button class="tab ${j===state.tab?'selected':''}" data-action="home-tab" data-tab="${j}" aria-pressed="${j===state.tab}">${I(glyph)}${name}</button>`).join('')}</div>${btn('Удиви меня','surprise','shuffle','surprise')}</div>
- <div class="section-heading"><div><span class="section-icon">${I(homeTabs[state.tab][0])}</span><h2>${state.tab===0?'Сейчас популярно':homeTabs[state.tab][1]}</h2></div><button class="text-btn" data-go="catalog">В каталог ${I('arrow')}</button></div>
- <section class="game-grid" aria-label="${homeTabs[state.tab][1]}">${rows.map(g=>`<button class="game-card" data-action="steam-${g.id}" aria-label="${esc(g.title)} — открыть в Steam"><span class="card-art"><img alt="" src="assets/${g.image}.jpg"></span><span class="card-open">${I('external')}</span><span class="card-copy"><strong title="${esc(g.title)}">${esc(g.title)}</strong><span class="card-tags"><span class="steam-badge">${I('steam')} Steam</span><span class="source-indicator" data-availability="${g.id}" title="Совпадения по названию в активных источниках"><i></i> Нет источников</span></span></span></button>`).join('')}</section>`;
- api.availability(rows.map(g=>g.title)).then(items=>{if(!current(n))return;for(const {title,sources} of items){const el=$(`[data-availability="${rows.find(g=>g.title===title)?.id}"]`);if(el&&sources.length){el.innerHTML=`<i></i>${esc(sources[0])}${sources.length>1?' +'+(sources.length-1):''}`;el.classList.add('found');el.title=sources.join(', ');}}}).catch(()=>{});
+ <div class="home-feed">
+  <div class="discovery">
+   <div class="tabs" aria-label="Подборки">${homeTabs.map(([glyph,name],j)=>`<button type="button" class="tab ${j===state.tab?'selected':''}" data-action="home-tab" data-tab="${j}" aria-pressed="${j===state.tab}" ${j===1?'title="Редакционная подборка, не рейтинг Steam"':''}>${I(glyph,`tab-glyph ${glyph}`)}${name}</button>`).join('')}</div>
+   <button type="button" class="tab surprise" data-action="surprise">${I('spark','tab-glyph spark')}Удиви меня</button>
+  </div>
+  <div class="feed-title"><h2>${I(homeTabs[state.tab][0],`tab-glyph ${homeTabs[state.tab][0]}`)} ${homeTabs[state.tab][1]}</h2>${state.tab===1?'<small>Подборка редакции</small>':''}</div>
+  <section class="game-grid" aria-label="${homeTabs[state.tab][1]}">${rows.map(g=>`<button class="game-card" data-action="steam-${g.id}" title="${esc(g.title)} — открыть в Steam"><span class="card-art"><img alt="" src="assets/${g.image}.jpg"></span><span class="card-copy"><strong>${I('steam')}${esc(g.title)}</strong><span class="card-tags"><span class="source-badge">Steam</span><span class="source-indicator" data-availability="${g.id}" title="Совпадения по названию в активных источниках"><span class="source-badge">Нет источников</span></span></span></span></button>`).join('')}</section>
+ </div>`;
+ api.availability(rows.map(g=>g.title)).then(items=>{
+  if(!current(n))return;
+  for(const {title,sources} of items){
+   const el=$(`[data-availability="${rows.find(g=>g.title===title)?.id}"]`);
+   if(el&&sources.length){el.innerHTML=sources.slice(0,3).map(name=>`<span class="source-badge">${esc(name)}</span>`).join('')+(sources.length>3?`<span class="source-badge">+${sources.length-3}</span>`:'');el.title=sources.join(', ');}
+  }
+ }).catch(()=>{});
 }
 const filters = [
  ['category1','Тип товара',[['','Все товары'],['998','Игры'],['21','DLC'],['994','Демо'],['10','Программы'],['996','Саундтреки'],['992','Видеоролики']]],
@@ -62,6 +69,13 @@ async function catalog(n){
   const r=await api.steam({...f,cc:f.cc||state.settings.region});if(!current(n))return;
   $('#catalog-results').innerHTML=r.games.length?`<div class="section-heading"><div><span class="section-icon">${I('steam')}</span><h2>Результаты</h2><span class="chip">${r.total.toLocaleString('ru')}</span></div></div><div class="catalog-grid">${r.games.map(g=>`<button class="catalog-card" data-action="steam-url" data-url="${esc(g.url)}"><span class="catalog-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-copy"><strong>${esc(g.title)}</strong><span>${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(g.price||'Цена не указана')}</span></span>${I('external')}</button>`).join('')}</div>${rangeButtons(r,'steam')}`:details('search','Ничего не найдено','Попробуйте изменить запрос или фильтры.')+(r.total?rangeButtons(r,'steam'):'');
  }catch(e){if(current(n))$('#catalog-results').innerHTML=details('alert','Каталог недоступен',e.message,btn('Повторить','rerender','refresh'));}
+}
+function rankings(){
+ content.innerHTML=`${head('МАГАЗИН STEAM','Рейтинги','Смотрите оценки игр и официальные чарты магазина Steam.')}
+ <div class="item-list">
+ <article class="list-item"><span class="list-icon">${I('star')}</span><div class="list-copy"><h3>Лучшие по отзывам</h3><p>Каталог Steam с сортировкой по отзывам.</p></div>${btn('В каталог','review-catalog','arrow')}</article>
+ <article class="list-item"><span class="list-icon">${I('trophy')}</span><div class="list-copy"><h3>Самые продаваемые</h3><p>Актуальный рейтинг на официальной странице Steam Charts.</p></div>${btn('Открыть в Steam','steam-charts','external')}</article>
+ </div>`;
 }
 function library(){
  const collections=[...new Set(state.library.flatMap(g=>g.collections))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -168,9 +182,12 @@ function dispatch(b){
  switch(a){
   case 'close':dialog.close();break;
   case 'home-tab':state.tab=Number(d.tab);return render();
-  case 'next-hero':selectHero((state.featured+1)%games.length);break;
   case 'surprise':selectHero((state.featured+1+Math.floor(Math.random()*(games.length-1)))%games.length);$('.hero')?.scrollIntoView({block:'nearest'});break;
   case 'steam-url':return api.openSteam(d.url);
+  case 'steam-charts':return api.openSteamCharts();
+  case 'review-catalog':state.filter={term:'',page:1,category1:'998',sort_by:'Reviews_DESC'};return go('catalog');
+  case 'feedback':return showDialog('Обратная связь',`<p class="muted">Сообщите об ошибке или предложите улучшение. Откроется форма GitHub — ByAzen ничего не отправляет автоматически.</p><div class="dialog-actions">${btn('Открыть форму','feedback-open','external','primary')}</div>`);
+  case 'feedback-open':return api.openProjectFeedback();
   case 'reset-filters':state.filter={term:'',page:1};return render();
   case 'rerender':return render();
   case 'steam-page':state.filter.page=Number(d.page);return render();
@@ -195,8 +212,8 @@ function dispatch(b){
  }
 }
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-action],button[data-go]');if(b&&!b.disabled)run(()=>dispatch(b));});
-$('#brand').onclick=()=>go('home');$('#profile').onclick=$('#top-profile').onclick=()=>go('settings');$('#top-download').onclick=()=>go('downloads');$('#side-add').onclick=()=>editGame();
-$('#top-download').innerHTML=I('download');$('#side-add').innerHTML=I('plus');$('#search-glyph').innerHTML=I('search');
+$('#profile').onclick=()=>go('settings');
+$('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('sliders');
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));

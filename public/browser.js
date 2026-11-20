@@ -31,6 +31,8 @@ const ext = url => { window.open(url,'_blank','noopener,noreferrer'); };
 export const browser = {
  settings:async()=>store.settings, saveSettings:async x=>{store.settings=x; save(); return x;},
  steam:async x=>api('steam',x), openSteam:async url=>ext(url),
+ openSteamCharts:async()=>ext('https://store.steampowered.com/charts/topselling'),
+ openProjectFeedback:async()=>ext('https://github.com/gggvkvh405-rgb/1/issues/new'),
  library:async()=>store.library,
  saveGame:async(id,g)=>{if(id) Object.assign(store.library.find(g=>g.id===id),g); else store.library.push({...g,id:crypto.randomUUID(),exe:'',lastPlayed:''}); save();},
  favorite:async id=>{const g=store.library.find(g=>g.id===id); g.favorite=!g.favorite; save();},

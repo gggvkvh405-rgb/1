@@ -4,32 +4,33 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://*.steamstatic.com https://steamcdn-a.akamaihd.net; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<meta name="theme-color" content="#101017">
+<meta name="theme-color" content="#101010">
 <title>ByAzen — игровой лаунчер</title>
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="reference.css">
 <script type="module" src="app.js"></script>
 </head>
 <body>
 <div class="shell">
   <aside class="sidebar" aria-label="Боковая панель">
-    <button id="brand" class="brand" title="На главную"><img src="assets/logo.svg" alt=""><span>By<span>Azen</span><small>GAME LAUNCHER</small></span></button>
-    <button id="profile" class="profile" title="Настройки профиля"></button>
-    <div class="nav-caption">МЕНЮ</div>
-    <nav id="nav" aria-label="Главная навигация"></nav>
-    <div class="side-library"><div class="nav-caption">МОЯ БИБЛИОТЕКА <button class="icon-btn" id="side-add" aria-label="Добавить игру"></button></div><div id="side-games"></div></div>
-    <div class="side-bottom"><div class="edition"><img src="assets/logo.svg" alt=""><div>ByAzen Desktop<small>Персональный лаунчер</small></div></div><div class="side-version"><span><i></i> Локальный режим</span><span>v1.0</span></div></div>
+    <button id="profile" class="profile" title="Настройки профиля" aria-label="Настройки профиля"></button>
+    <nav aria-label="Главная навигация">
+      <div id="nav"></div>
+      <div class="side-tools">
+        <form class="global-search" id="global-search"><input type="search" id="global-input" aria-label="Поиск игр в Steam" placeholder="Поиск" maxlength="100" title="Поиск в Steam (Ctrl+K)"></form>
+        <button class="quick-button" id="source-shortcut" data-go="sources" aria-label="Источники" title="Источники"></button>
+        <button class="quick-button" id="filter-shortcut" data-go="catalog" aria-label="Фильтры каталога" title="Фильтры каталога"></button>
+      </div>
+    </nav>
+    <div class="side-library" aria-label="Моя библиотека"><div id="side-games"></div></div>
   </aside>
   <div class="stage">
-    <header class="topbar">
-      <div class="crumb" id="crumb"></div>
-      <form class="global-search" id="global-search"><span id="search-glyph"></span><input id="global-input" aria-label="Поиск игр в Steam" placeholder="Поиск игр в Steam…" maxlength="100"><kbd>Ctrl K</kbd></form>
-      <div class="top-actions"><button class="icon-btn top-icon" id="top-download" aria-label="Загрузки" title="Загрузки"></button><span class="top-rule"></span><button class="top-avatar" id="top-profile" aria-label="Профиль" title="Профиль">И</button></div>
-    </header>
     <main id="content" tabindex="-1"></main>
   </div>
 </div>
-<dialog id="dialog"><div id="dialog-body"></div></dialog>
+<button type="button" id="feedback" data-action="feedback">Send Feedback</button>
+<dialog id="dialog" aria-labelledby="dialog-title"><div id="dialog-body"></div></dialog>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>
