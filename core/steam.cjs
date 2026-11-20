@@ -16,7 +16,8 @@ function steamQuery(raw = {}) {
   for (const [key,val] of Object.entries({ query:'', start: (page - 1) * PAGE, count: PAGE, infinite: 1, l: 'russian', cc: 'DE' })) q.set(key, val);
   if (typeof raw.term === 'string' && raw.term.trim()) q.set('term', raw.term.trim().slice(0, 100));
   for (const [key, options] of Object.entries(picks)) if (options.includes(raw[key])) q.set(key, raw[key]);
-  if (typeof raw.tags === 'string' && /^\d{1,8}(,\d{1,8}){0,4}$/.test(raw.tags)) q.set('tags', raw.tags);
+  if (typeof raw.tags === 'string' && /^\d{1,8}(,\d{1,8}){0,9}$/.test(raw.tags)) q.set('tags', raw.tags);
+  if (raw.sort_by === 'topsellers') q.set('filter', 'topsellers');
   if (raw.specials === true) q.set('specials', '1');
   return {u, page};
 }
@@ -39,7 +40,15 @@ function parseResults(data, page) {
     const item = $(el), url = officialProduct(item.attr('href')), title = item.find('.title').first().text().trim();
     if (!url || !title) return;
     const price = item.find('.discount_final_price').first().text().trim() || item.find('.search_price').first().text().trim();
-    games.push({url,title,image:steamImage(item.find('.search_capsule img').first().attr('src')),price, discount:item.find('.discount_pct').first().text().trim()});
+    const release = item.find('.search_released').first().text().trim();
+    const year = Number(release.match(/\b(?:19|20)\d{2}\b/)?.[0]) || null;
+    let tags = [];
+    try {
+      const parsed = JSON.parse(item.attr('data-ds-tagids') || '[]');
+      if (Array.isArray(parsed)) tags = [...new Set(parsed.filter(id=>Number.isInteger(id)&&id>0&&id<1e8))].slice(0,60).map(String);
+    } catch { /* Unknown tags should stay absent. */ }
+    games.push({url,title,image:steamImage(item.find('.search_capsule img').first().attr('src')),price,
+      discount:item.find('.discount_pct').first().text().trim(), year, tags});
   });
   return {games, total: Math.max(0, Number(data.total_count)), page, pageSize: PAGE};
 }

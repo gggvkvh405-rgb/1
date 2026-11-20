@@ -1,6 +1,7 @@
 import {icon as I} from './icons.js';
 import {games,regions,weeklyGames,achievements} from './games.js';
 import {browser} from './browser.js';
+import {genres,tags,sorts,properties,FIRST_YEAR,CLASSIC_UNTIL,LAST_YEAR,normalize,offlineResults,refinePage,catalogMeta} from './catalog.js';
 const api = window.byazen || browser;
 const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
@@ -52,23 +53,102 @@ function home(n){
   }
  }).catch(()=>{});
 }
-const filters = [
- ['category1','Тип товара',[['','Все товары'],['998','Игры'],['21','DLC'],['994','Демо'],['10','Программы'],['996','Саундтреки'],['992','Видеоролики']]],
- ['tags','Жанр / метка',[['','Любой жанр'],['19','Экшен'],['21','Приключения'],['122','Ролевые игры'],['9','Стратегии'],['492','Инди'],['599','Симуляторы'],['1695','Открытый мир'],['1716','Рогалики'],['3859','Многопользовательские']]],
- ['os','Платформа',[['','Все платформы'],['win','Windows'],['mac','macOS'],['linux','Linux']]],
- ['maxprice','Цена',[['','Любая цена'],['free','Бесплатно'],...['5','10','20','30','40','60'].map(n=>[n,`До ${n} (порог Steam)`])]],
- ['sort_by','Сортировка',[['','Релевантность'],['Name_ASC','Название: А–Я'],['Name_DESC','Название: Я–А'],['Released_DESC','По новизне'],['Price_ASC','Сначала дешевле'],['Price_DESC','Сначала дороже'],['Reviews_DESC','По отзывам']]],
- ['cc','Регион Steam',regions]
-];
+const catalogLocal = {min:FIRST_YEAR,max:LAST_YEAR,sources:[],mobileOpen:false};
+const catalogPanels = new Map();
+const yearBox = (name,min,max,value,label) => `<input type="range" name="${name}" min="${min}" max="${max}" value="${value}" aria-label="${label}">`;
+const facet = (key, title, body, opened=true, count) => `<details class="catalog-facet ${key}" data-panel="${key}" ${(catalogPanels.get(key)??opened)?'open':''}><summary>${I('down')}<i></i><span>${title}</span>${count!=null?`<small>${count}</small>`:''}</summary><div class="catalog-facet-body">${body}</div></details>`;
+const resultCaption = n => `${n.toLocaleString('ru')} ${ {one:'результат',few:'результата',many:'результатов'}[new Intl.PluralRules('ru').select(n)] || 'результатов' }`;
+function checklist(items, selected, name, label){
+ return `<div class="catalog-check-group"><input class="facet-search" type="search" placeholder="Фильтр…" aria-label="${label}" autocomplete="off"><div class="catalog-options">${items.map(([id,text])=>`<label class="toggle"><input type="checkbox" name="${name}" value="${esc(id)}" ${selected.includes(id)?'checked':''}><span>${esc(text)}</span></label>`).join('')}</div><p class="facet-no-match muted" hidden>Нет совпадений</p></div>`;
+}
 async function catalog(n){
- const f=state.filter;
- content.innerHTML=`${head('МАГАЗИН STEAM','Каталог','Найдите игры и другие товары в официальном магазине Steam.')}
- <form id="catalog-form" class="pane filter-form"><label class="field"><span>Название</span><div class="input-icon">${I('search')}<input name="term" maxlength="100" value="${esc(f.term)}" placeholder="Введите название игры"></div></label><div class="filter-grid">${filters.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||(k==='cc'?state.settings.region:''),label)}</label>`).join('')}</div><div class="row filter-bottom"><label class="toggle"><input type="checkbox" name="specials" ${f.specials?'checked':''}> Только со скидкой</label><div class="row">${btn('Сбросить','reset-filters')}<button class="btn primary" type="submit">${I('search')} Найти</button></div></div></form><div id="catalog-results" aria-live="polite">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</div>`;
- $('#catalog-form').onsubmit=e=>{e.preventDefault();state.filter={...Object.fromEntries(new FormData(e.currentTarget)),specials:e.currentTarget.specials.checked,page:1};run(render);};
+ const f=state.filter, selected=String(f.tags||'').split(',').filter(Boolean);
+ const liveFields=properties.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||'',label)}</label>`).join('');
+ content.innerHTML=`<form id="catalog-form" class="catalog-layout ${catalogLocal.mobileOpen?'filters-open':''}">
+ <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p></div>
+ <div class="catalog-sort"><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
+ <section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section>
+ <aside id="catalog-filters" class="catalog-filters" aria-label="Фильтры каталога"><div class="catalog-filter-scroll">
+ <div class="catalog-era" aria-label="Фильтр по эпохе"><button type="button" data-era="modern">${I('grid')}Современные игры</button><button type="button" data-era="classic">${I('game')}Классика</button></div>
+ ${facet('year','Год выпуска',`<p class="facet-help">Год выпуска на этой странице</p><div class="year-labels"><output id="year-low"></output><output id="year-high"></output></div><div class="year-track"><div></div>${yearBox('minYear',FIRST_YEAR,LAST_YEAR,catalogLocal.min,'Минимальный год выпуска')}${yearBox('maxYear',FIRST_YEAR,LAST_YEAR,catalogLocal.max,'Максимальный год выпуска')}</div>`)}
+ ${facet('genres','Жанры',`<p class="facet-help">${genres.length} вариантов</p>${checklist(genres,selected,'steamTag','Поиск жанров')}`,true,genres.length)}
+ ${facet('tags','Теги',`<p class="facet-help">${tags.length} вариантов</p>${checklist(tags,selected,'steamTag','Поиск тегов')}`,true,tags.length)}
+ ${facet('source-facet','Источники загрузки','<div id="catalog-source-options"><p class="muted">Загружаем источники…</p></div>')}
+ ${facet('properties','Параметры Steam',`<label class="field"><span>Название</span><input name="term" value="${esc(f.term)}" maxlength="100" placeholder="Введите название игры"></label>${liveFields}<label class="field"><span>Регион Steam</span>${pick('cc',regions,f.cc||state.settings.region,'Регион Steam')}</label><label class="toggle"><input name="specials" type="checkbox" ${f.specials?'checked':''}> Только со скидкой</label>`,false)}
+ </div><div class="catalog-apply">${btn('Сбросить','reset-filters')}<button type="submit" class="btn primary">${I('search')} Применить</button></div>
+ </aside></form>`;
+ const form=$('#catalog-form'), results=$('#catalog-results'), sourceBox=$('#catalog-source-options');
+ let pageResult, offlineReason='', pageMatches=new Map();
+ function drawPage(){
+  if(!pageResult||!current(n))return;
+  const r=pageResult, rows=refinePage(r.games,catalogLocal,pageMatches);
+  const refined=catalogLocal.min!==FIRST_YEAR||catalogLocal.max!==LAST_YEAR||catalogLocal.sources.length>0;
+  $('#catalog-total').textContent=r.offline?`Локальная подборка: ${r.total.toLocaleString('ru')}`:resultCaption(r.total);
+  $('#catalog-hint').textContent=refined?`Показано на этой странице: ${rows.length} из ${r.games.length}`:'Используйте боковую панель для уточнения поиска';
+  const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>Steam недоступен. Показана локальная подборка без актуальных цен и наличия. Фильтры платформы, цены, скидок и региона не применяются.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
+  const list=rows.length?`<div class="catalog-list">${rows.map(g=>{
+   const sources=pageMatches.get(g.title)||[], meta=catalogMeta(g);
+   const price=g.price||'', badge=sources.length?sources.map(x=>`<span class="catalog-badge">${esc(x)}</span>`).join(''):'<span class="catalog-badge">Steam</span>';
+   return `<button type="button" class="catalog-row" data-action="steam-url" data-url="${esc(g.url)}" title="${esc(g.title)} — открыть в Steam"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
+  }).join('')}</div>`:details('search',refined?'Нет совпадений на этой странице':'Ничего не найдено',refined?'Измените фильтры года и источников или перейдите к другой странице.':'Попробуйте изменить запрос или фильтры.');
+  results.setAttribute('aria-busy','false');results.innerHTML=unavailable+list+(r.total>r.pageSize&&!r.offline?rangeButtons(r,'steam'):'');
+ }
+ function showYears(){
+  const lo=$('[name=minYear]',form), hi=$('[name=maxYear]',form), {min,max}=catalogLocal;
+  lo.value=min;hi.value=max;$('#year-low').value=String(min);$('#year-high').value=String(max);
+  const p=x=>(x-FIRST_YEAR)/(LAST_YEAR-FIRST_YEAR)*100+'%';
+  $('.year-track',form).style.setProperty('--low',p(min));$('.year-track',form).style.setProperty('--high',p(max));
+  form.querySelectorAll('[data-era]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.era==='modern'?min===CLASSIC_UNTIL+1&&max===LAST_YEAR:min===FIRST_YEAR&&max===CLASSIC_UNTIL)));
+ }
+ function searchOptions(input){
+  const group=input.closest('.catalog-check-group'), query=normalize(input.value);let count=0;
+  group.querySelectorAll('label.toggle').forEach(el=>{el.hidden=!normalize(el.textContent).includes(query);if(!el.hidden)count++;});
+  $('.facet-no-match',group).hidden=count!==0;
+ }
+ form.querySelectorAll('.catalog-facet').forEach(p=>p.ontoggle=()=>catalogPanels.set(p.dataset.panel,p.open));
+ form.onkeydown=e=>{if(e.key==='Enter'&&e.target.matches('.facet-search'))e.preventDefault();};
+ form.oninput=e=>{
+  const t=e.target;
+  if(t.matches('.facet-search'))searchOptions(t);
+  if(t.name==='minYear'||t.name==='maxYear'){
+   if(t.name==='minYear')catalogLocal.min=Math.min(Number(t.value),catalogLocal.max);
+   else catalogLocal.max=Math.max(Number(t.value),catalogLocal.min);
+   showYears();drawPage();
+  }
+ };
+ form.onchange=e=>{
+  if(e.target.name==='sort_by')form.requestSubmit();
+  if(e.target.name==='catalogSource'){catalogLocal.sources=[...form.querySelectorAll('[name=catalogSource]:checked')].map(x=>x.value);drawPage();}
+ };
+ form.onsubmit=e=>{
+  e.preventDefault();const d=new FormData(form), checked=d.getAll('steamTag');
+  if(checked.length>10){toast('Выберите не больше 10 жанров и тегов.',true);return;}
+  state.filter={...Object.fromEntries(['term','category1','os','maxprice','sort_by','cc'].map(k=>[k,d.get(k)])),tags:checked.join(','),specials:d.has('specials'),page:1};
+  window.scrollTo(0,0);run(render);
+ };
+ form.querySelectorAll('[data-era]').forEach(b=>b.onclick=()=>{
+  const chosen=b.getAttribute('aria-pressed')==='true';
+  catalogLocal.min=chosen||b.dataset.era==='classic'?FIRST_YEAR:CLASSIC_UNTIL+1;
+  catalogLocal.max=chosen||b.dataset.era==='modern'?LAST_YEAR:CLASSIC_UNTIL;
+  showYears();drawPage();
+ });
+ showYears();
+ api.sources().then(all=>{
+  if(!current(n))return;
+  const active=[...new Set(all.filter(x=>x.enabled).map(x=>x.name))];
+  catalogLocal.sources=catalogLocal.sources.filter(x=>active.includes(x));
+  sourceBox.innerHTML=active.length?`<p class="facet-help">Активные источники на этой странице</p>${checklist(active.map(x=>[x,x]),catalogLocal.sources,'catalogSource','Поиск источников')}`:`<p class="muted">Нет подключённых источников.</p><button type="button" class="text-btn" data-go="sources">Управлять источниками ${I('arrow')}</button>`;
+  drawPage();
+ }).catch(()=>{if(current(n))sourceBox.textContent='Не удалось загрузить источники.';});
+ try{pageResult=await api.steam({...f,cc:f.cc||state.settings.region});}
+ catch(e){offlineReason=e.message;pageResult=offlineResults(f);}
+ if(!current(n))return;
+ drawPage();
  try{
-  const r=await api.steam({...f,cc:f.cc||state.settings.region});if(!current(n))return;
-  $('#catalog-results').innerHTML=r.games.length?`<div class="section-heading"><div><span class="section-icon">${I('steam')}</span><h2>Результаты</h2><span class="chip">${r.total.toLocaleString('ru')}</span></div></div><div class="catalog-grid">${r.games.map(g=>`<button class="catalog-card" data-action="steam-url" data-url="${esc(g.url)}"><span class="catalog-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-copy"><strong>${esc(g.title)}</strong><span>${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(g.price||'Цена не указана')}</span></span>${I('external')}</button>`).join('')}</div>${rangeButtons(r,'steam')}`:details('search','Ничего не найдено','Попробуйте изменить запрос или фильтры.')+(r.total?rangeButtons(r,'steam'):'');
- }catch(e){if(current(n))$('#catalog-results').innerHTML=details('alert','Каталог недоступен',e.message,btn('Повторить','rerender','refresh'));}
+  const availability=await api.availability(pageResult.games.map(g=>g.title));
+  if(!current(n))return;
+  pageMatches=new Map(availability.map(x=>[x.title,x.sources]));drawPage();
+ }catch{/* Missing source information must not block Steam results. */}
 }
 function rankings(){
  content.innerHTML=`${head('МАГАЗИН STEAM','Рейтинги','Смотрите оценки игр и официальные чарты магазина Steam.')}
@@ -188,9 +268,10 @@ function dispatch(b){
   case 'review-catalog':state.filter={term:'',page:1,category1:'998',sort_by:'Reviews_DESC'};return go('catalog');
   case 'feedback':return showDialog('Обратная связь',`<p class="muted">Сообщите об ошибке или предложите улучшение. Откроется форма GitHub — ByAzen ничего не отправляет автоматически.</p><div class="dialog-actions">${btn('Открыть форму','feedback-open','external','primary')}</div>`);
   case 'feedback-open':return api.openProjectFeedback();
-  case 'reset-filters':state.filter={term:'',page:1};return render();
+  case 'catalog-toggle':catalogLocal.mobileOpen=!catalogLocal.mobileOpen;$('#catalog-form').classList.toggle('filters-open',catalogLocal.mobileOpen);b.setAttribute('aria-expanded',String(catalogLocal.mobileOpen));break;
+  case 'reset-filters':state.filter={term:'',page:1};Object.assign(catalogLocal,{min:FIRST_YEAR,max:LAST_YEAR,sources:[]});window.scrollTo(0,0);return render();
   case 'rerender':return render();
-  case 'steam-page':state.filter.page=Number(d.page);return render();
+  case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
   case 'source-page':state.srcPage=Number(d.page);return loadSourceGames(renderId);
   case 'library-tab':state.libraryFilter=d.tab;return render();
   case 'new-game':return editGame();
