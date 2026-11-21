@@ -199,7 +199,7 @@ async function refreshDownloads(n){
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
- content.innerHTML=`${head('ПОЛЬЗОВАТЕЛЬСКИЕ ИСТОЧНИКИ','Источники','Импортируйте свои списки загрузок в формате Hydra JSON.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>По умолчанию источников нет. Вы отвечаете за доверие к источнику, безопасность файлов и право их скачивать.</span></div><div id="sources-list"></div><div class="section-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div>`;
+ content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div id="sources-list"></div><div class="section-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
  form.onsubmit=async e=>{
   e.preventDefault();
@@ -211,10 +211,28 @@ async function sources(n){
   finally{submit.disabled=false;}
  };
  $('#source-search').onsubmit=e=>{e.preventDefault();state.srcTerm=new FormData(e.currentTarget).get('term');state.srcPage=1;run(()=>loadSourceGames(n));};
- const list=await api.sources();if(!current(n))return;
- $('#sources-list').innerHTML=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span></h3><p>${s.count} игр · Обновлён ${date(s.updated)} · ${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
+ await refreshSourceList(n);
  await loadSourceGames(n);
 }
+let sourceListRequest=0;
+function sourceStatus(s){
+ if(s.loading)return s.updated?'Обновляем список…':'Загружаем список…';
+ if(s.syncError)return `${s.updated?'Показан сохранённый список. ':''}Ошибка: ${s.syncError}`;
+ if(s.updated)return `${s.count} игр · Обновлён ${date(s.updated)}`;
+ return s.enabled?'Ожидает загрузки списка':'Список ещё не загружен';
+}
+async function refreshSourceList(n){
+ const request=++sourceListRequest;
+ const list=await api.sources();if(!current(n)||request!==sourceListRequest)return false;
+ const target=$('#sources-list');if(!target)return false;
+ const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
+ if(target._markup===html)return false;
+ const focus=target.contains(document.activeElement)?document.activeElement.dataset:null;
+ target.innerHTML=html;target._markup=html;
+ if(focus)[...target.querySelectorAll('button')].find(b=>b.dataset.id===focus.id&&b.dataset.op===focus.op)?.focus({preventScroll:true});
+ return true;
+}
+setInterval(()=>{if(window.byazen&&state.section==='sources'){const n=renderId;refreshSourceList(n).then(changed=>{if(changed&&current(n))return loadSourceGames(n);}).catch(()=>{});}},1500);
 let sourceRead=0, shownSourceGames=[];
 async function loadSourceGames(n){
  const task=++sourceRead;
@@ -230,7 +248,15 @@ async function openCatalogGame(product){
  const request=++gameOpenRequest, version=renderId;
  const groups=await api.sourceMatches(product.title);
  if(request!==gameOpenRequest||!current(version))return;
- if(!groups.length)return api.openSteam(product.url);
+ if(!groups.length){
+  const sources=await api.sources();
+  if(request!==gameOpenRequest||!current(version))return;
+  if(sources.some(s=>s.presetName&&s.enabled&&(s.loading||!s.updated&&!s.syncError))){
+   showDialog(esc(product.title),`<p class="muted">Среди загруженных источников пока нет совпадений. Некоторые списки ещё загружаются — попробуйте снова позже.</p><div class="dialog-actions">${steamDialogButton(product.url)}</div>`);
+   return;
+  }
+  return api.openSteam(product.url);
+ }
  if(groups.length===1&&groups[0].count===1){
   const entry=groups[0].entries[0], g=await api.sourceGame(groups[0].id,entry.index,entry.title);
   if(request===gameOpenRequest&&current(version))sourceLinkDialog(g,{steam:product.url});

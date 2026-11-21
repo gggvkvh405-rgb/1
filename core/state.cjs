@@ -10,7 +10,7 @@ function updateSettings(raw = {}) {
 function readState(file) {
   let data = {};
   try { data = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch(e) { if (e.code !== 'ENOENT') throw Error('Не удалось прочитать файл данных: ' + e.message); }
-  return {settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], downloads:data.downloads || []};
+  return {settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], sourcePresetRevision:data.sourcePresetRevision || 0, downloads:data.downloads || []};
 }
 function saveState(file,data) {
   fs.mkdirSync(path.dirname(file),{recursive:true});

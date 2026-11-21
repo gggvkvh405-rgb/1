@@ -11,6 +11,8 @@ const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
+const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT}=require('../core/presets.cjs');
+
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
 protocol.registerSchemesAsPrivileged([{scheme:'byazen', privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
@@ -25,7 +27,11 @@ async function bootstrap() {
   const previews = new Map(), exeTokens = new Map();
   function token(map,value) { const id = randomUUID(); map.set(id,value); if (map.size > 6) map.delete(map.keys().next().value); return id; }
   const find = (list,id) => { const value = list.find(x => x.id === id); if (!value) throw Error('Запись не найдена.'); return value; };
-  async function readSource(url) { return parseSource(await getJSON(webURL(url).href,{max:MAX_JSON})); }
+  async function readSource(url,limits={maxBytes:MAX_JSON}) {
+    return parseSource(await getJSON(webURL(url).href,{max:limits.maxBytes}),limits);
+  }
+  const presetSync=createPresetSync(data.sources,readSource,persist);
+  if(installPresets(data))persist();
   const actions = {
     settings: () => data.settings,
     saveSettings: (x) => { data.settings = updateSettings(x); persist(); return data.settings; },
@@ -33,7 +39,7 @@ async function bootstrap() {
     openSteam: async raw => { const safe = officialProduct(raw); if (!safe) throw Error('Недопустимая страница Steam.'); await shell.openExternal(safe); },
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
-    sources: () => sourcesSummary(data.sources),
+    sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
     previewFile: async () => {
       const {filePaths:[file]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Hydra JSON',extensions:['json']}]});
       if (!file) return null;
@@ -47,13 +53,19 @@ async function bootstrap() {
     previewURL: async raw => {const url = webURL(raw).href; return stash(await readSource(url),{kind:'url',url});},
     importSource: id => {
       if (!previews.has(id)) throw Error('Откройте предпросмотр повторно.');
-      if (data.sources.length >= 20) throw Error('Можно добавить до 20 источников.');
-      data.sources.push({...previews.get(id),id:randomUUID(),enabled:true,updated:new Date().toISOString()}); previews.delete(id); persist();
+      const draft=previews.get(id);
+      if(draft.kind==='url'&&data.sources.some(s=>s.kind==='url'&&urlKey(s.url)===urlKey(draft.url)))throw Error('Источник с такой ссылкой уже добавлен.');
+      if (data.sources.filter(s=>!s.presetName).length >= CUSTOM_SOURCE_LIMIT) throw Error('Можно добавить до 20 своих источников.');
+      data.sources.push({...draft,id:randomUUID(),enabled:true,updated:new Date().toISOString()}); previews.delete(id); persist();
     },
     sourceAction: async (id,op) => {
       const src = find(data.sources,id);
       if (op === 'remove') data.sources.splice(data.sources.indexOf(src),1);
-      else if (op === 'toggle') src.enabled = !src.enabled;
+      else if (op === 'toggle') {
+        src.enabled = !src.enabled;
+        if(src.enabled&&src.presetName&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
+      }
+      else if(op==='refresh'&&src.presetName)return presetSync.refresh(src);
       else if (op === 'refresh' && src.kind === 'url') {
         const parsed = await readSource(src.url); if (!data.sources.includes(src)) return;
         Object.assign(src,parsed,{updated:new Date().toISOString()});
@@ -135,6 +147,7 @@ async function bootstrap() {
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});
   await window.loadURL(origin+'/');
+  void presetSync.startup();
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {

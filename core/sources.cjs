@@ -10,13 +10,13 @@ function sourceLink(value) {
   }
   return webURL(value).href;
 }
-function parseSource(input) {
+function parseSource(input, {maxBytes=MAX_JSON,maxEntries=10000}={}) {
   if (typeof input === 'string') {
-    if (Buffer.byteLength(input) > MAX_JSON) throw Error('Максимальный размер JSON — 4 МБ.');
+    if (Buffer.byteLength(input) > maxBytes) throw Error(`Максимальный размер JSON — ${maxBytes / 1048576} МБ.`);
     try { input = JSON.parse(input.replace(/^\uFEFF/, '')); } catch { throw Error('Некорректный JSON.'); }
   }
   if (!input || !line(input.name, 100) || !Array.isArray(input.downloads)) throw Error('Ожидается Hydra JSON с полями name и downloads.');
-  if (input.downloads.length > 10000) throw Error('В источнике более 10 000 записей.');
+  if (input.downloads.length > maxEntries) throw Error(`Превышен лимит записей в источнике (${maxEntries}).`);
   let skipped = 0, ignoredLinks = 0;
   const games = [];
   for (const entry of input.downloads) {
