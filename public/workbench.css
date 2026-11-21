@@ -22,3 +22,4 @@
 .settings-workbench{margin:0 0 13px}.settings-workbench .btn{white-space:normal;text-align:center}
 #health-center .steam-facts,#space-report .steam-facts{margin-block:10px}#health-center h3{margin-top:16px}
 @media(max-width:720px){.home-widget{flex-wrap:wrap}}
+@media(max-width:720px){.catalog-results .pagination{flex-wrap:wrap;gap:7px}.catalog-results .pagination .btn{padding-inline:8px}}
