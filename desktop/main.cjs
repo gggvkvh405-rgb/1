@@ -11,6 +11,8 @@ const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
 const {transferOptions,cleanHash}=require('../core/transfer-policy.cjs');
 const {checkDownload}=require('../core/download-check.cjs');
+const {SaveBackups}=require('../core/save-backups.cjs');
+const {discoverExecutables,discoverSteam,importSelected,steamId,directory}=require('../core/installed-games.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
 const {auditSources}=require('../core/source-audit.cjs');
@@ -26,12 +28,44 @@ if (process.env.PORTABLE_EXECUTABLE_DIR) app.setPath('userData', path.join(proce
 async function bootstrap() {
   const file = path.join(app.getPath('userData'),'state.json');
   const data = readState(file);
+  await fs.mkdir(path.dirname(file),{recursive:true});
+  const copies=new SaveBackups(path.dirname(file));
   const persist = () => {try { saveState(file,data); } catch (e) { console.error('State:',e.message); window?.webContents.send('storage-error',e.message); }};
   let window;
   const queue = new DownloadQueue(data.downloads,persist,{options:data.downloadOptions});
   app.once('before-quit',()=>queue.dispose());
   let downloadCheck;
-  const previews = new Map(), exeTokens = new Map();
+  const previews = new Map(),exeTokens = new Map(),installPlans=new Map(),restorePlans=new Map();
+  const folderKinds=new Set(['saves','screenshots','mods']);
+  let maintenance=false,scanning=false;
+  function withMaintenance(fn){
+    if(maintenance)throw Error('Дождитесь завершения текущей операции с файлами.');
+    maintenance=true;
+    return Promise.resolve().then(fn).finally(()=>{maintenance=false;});
+  }
+  const game=id=>find(data.library,id);
+  async function pickFolder(title,defaultPath){
+    const {filePaths:[folder]}=await dialog.showOpenDialog(window,{title,defaultPath,properties:['openDirectory']});
+    return folder||null;
+  }
+  function folderOf(g,kind){
+    if(!folderKinds.has(kind))throw Error('Неизвестный тип папки.');
+    return g.folders?.[kind]||'';
+  }
+  function savesOf(g){const root=folderOf(g,'saves');if(!root)throw Error('Сначала выберите папку сохранений.');return root;}
+  async function scanLibrary(kind){
+    if(scanning)throw Error('Поиск уже выполняется.');
+    if(!['local','steam'].includes(kind))throw Error('Неизвестный режим импорта.');
+    scanning=true;
+    try{
+      const steam=kind==='steam',programFiles=process.env['ProgramFiles(x86)']||process.env.ProgramFiles;
+      const folder=await pickFolder(steam?'Выберите папку библиотеки Steam или steamapps':'Выберите папку с установленными играми',steam&&programFiles?path.join(programFiles,'Steam'):undefined);
+      if(!folder)return null;
+      const {found,limited}=await (steam?discoverSteam(folder):discoverExecutables(folder));
+      return {id:token(installPlans,found),limited,items:found.map((r,i)=>({index:i,title:r.title,path:r.file,steamAppId:r.steamAppId||'',
+        present:data.library.some(g=>r.steamAppId?g.steamAppId===r.steamAppId:g.exe?.toLowerCase()===r.file.toLowerCase())}))};
+    }finally{scanning=false;}
+  }
   function token(map,value) { const id = randomUUID(); map.set(id,value); if (map.size > 6) map.delete(map.keys().next().value); return id; }
   const find = (list,id) => { const value = list.find(x => x.id === id); if (!value) throw Error('Запись не найдена.'); return value; };
   const readSource=createFeedReader();
@@ -121,6 +155,40 @@ async function bootstrap() {
       return addDownload(url,src.games[index].title,src.name);
     },
     library: () => data.library,
+    scanLibrary,
+    importInstalledGames: (draft,indices) => withMaintenance(async()=>{
+      const found=installPlans.get(draft);if(!found)throw Error('Откройте новый предпросмотр импорта.');
+      const result=await importSelected(data.library,found,indices);installPlans.delete(draft);persist();return result;
+    }),
+    gameFolders: id => {const g=game(id);return {folders:Object.fromEntries([...folderKinds].map(kind=>[kind,folderOf(g,kind)])),auto:g.autoSaveBackup===true};},
+    pickGameFolder: (id,kind) => withMaintenance(async()=>{
+      const g=game(id),current=folderOf(g,kind),picked=await pickFolder(kind==='saves'?'Выберите папку сохранений игры':'Выберите папку игры',current||undefined);
+      if(!picked)return false;
+      const selected=kind==='saves'?await copies.source(picked):await directory(picked);
+      game(id);g.folders={...g.folders,[kind]:selected};
+      if(kind==='saves'&&selected!==current)g.autoSaveBackup=false;
+      persist();return true;
+    }),
+    openGameFolder: async(id,kind)=>{
+      const target=folderOf(game(id),kind);if(!target)throw Error('Сначала выберите папку.');
+      if(await shell.openPath(await directory(target)))throw Error('Не удалось открыть папку.');
+    },
+    setAutoSaveBackup: (id,enabled) => withMaintenance(async()=>{
+      if(typeof enabled!=='boolean')throw Error('Неверная настройка копирования.');
+      const g=game(id);if(enabled)await copies.source(savesOf(g));g.autoSaveBackup=enabled;persist();
+    }),
+    listSaveBackups: id => copies.list(game(id).id),
+    makeSaveBackup: id => withMaintenance(()=>copies.make(game(id).id,savesOf(game(id)))),
+    previewSaveRestore: (id,backup) => withMaintenance(async()=>{
+      const preview=await copies.preview(game(id).id,savesOf(game(id)),backup);
+      const draft=token(restorePlans,{id,preview});
+      const {fingerprint,...shown}=preview;return {...shown,draft};
+    }),
+    restoreSaveBackup: (id,draft) => withMaintenance(async()=>{
+      const pending=restorePlans.get(draft);if(!pending||pending.id!==id)throw Error('Откройте новый предпросмотр восстановления.');
+      restorePlans.delete(draft);return copies.restore(game(id).id,savesOf(game(id)),pending.preview);
+    }),
+    deleteSaveBackup: (id,backup) => withMaintenance(()=>copies.remove(game(id).id,backup)),
     chooseExe: async () => {
       const {filePaths:[exe]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Windows',extensions:['exe']}]});
       if (!exe) return null;
@@ -130,18 +198,22 @@ async function bootstrap() {
       const values = cleanGame(raw); const old = id ? find(data.library,id) : null;
       const exe = exeToken ? exeTokens.get(exeToken) : old?.exe || '';
       if (exeToken) {await prepareLaunch(exe); exeTokens.delete(exeToken);}
-      if (old) Object.assign(old,values,{exe});
+      if (old){Object.assign(old,values,{exe});if(exeToken)delete old.steamAppId;}
       else {if (data.library.length >= 1500) throw Error('В библиотеке уже 1500 игр.'); data.library.push({...values,exe,id:randomUUID(),lastPlayed:''});}
       persist();
     },
     favorite: id => { const g = find(data.library,id); g.favorite = !g.favorite; persist(); },
-    removeGame: id => { data.library.splice(data.library.indexOf(find(data.library,id)),1); persist(); },
-    launchGame: async (id,profile) => {
-      const g = find(data.library,id);
-      if (!g.exe) throw Error('Сначала выберите файл .exe в карточке игры.');
-      if (!Number.isInteger(profile) || profile < -1 || profile >= g.profiles.length) throw Error('Профиль не найден.');
-      await launchGame(g.exe,g.profiles[profile]?.args || []); g.lastPlayed = new Date().toISOString(); persist();
-    },
+    removeGame: id => withMaintenance(()=>{data.library.splice(data.library.indexOf(game(id)),1);persist();}),
+    launchGame: (id,profile) => withMaintenance(async()=>{
+      const g=game(id),steam=steamId(g.steamAppId);
+      if(!steam&&!g.exe)throw Error('Сначала выберите файл .exe в карточке игры.');
+      if(!Number.isInteger(profile)||profile < -1||(steam?profile!==-1:profile>=g.profiles.length))throw Error('Профиль не найден.');
+      const args=g.profiles[profile]?.args||[];
+      if(!steam)await prepareLaunch(g.exe,args);
+      if(g.autoSaveBackup===true)await copies.make(g.id,savesOf(g),{automatic:true});
+      if(steam)await shell.openExternal(`steam://rungameid/${g.steamAppId}`);else await launchGame(g.exe,args);
+      g.lastPlayed=new Date().toISOString();persist();
+    }),
     downloads: () => queue.list(),
     downloadInfo: () => ({items:queue.list(),options:data.downloadOptions,allowed:queue.allowed(),version:app.getVersion()}),
     saveDownloadOptions: raw => {
