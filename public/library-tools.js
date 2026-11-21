@@ -17,8 +17,11 @@ export function libraryTools({api,dialog,showDialog,esc,icon:I,notify,refreshLib
  }
  function action(panel,label,cb){const b=[...panel.querySelectorAll('[data-tool]')].find(x=>x.dataset.tool===label);if(b)b.onclick=()=>busy(panel,cb);}
  async function openScan(kind,isCurrent=()=>true){
-  const scan=await api.scanLibrary(kind);if(!scan||!isCurrent())return;
-  showDialog(kind==='steam'?'Импорт из Steam':'Установленные игры',`<section id="library-scan"><p class="muted">${kind==='steam'?'Найдены установленные игры в выбранной библиотеке Steam. Запуск будет происходить через Steam.':'Отметьте исполняемые файлы игр. Поиск не запускает найденные файлы; служебные программы могут встречаться в результатах.'}</p>${scan.limited?'<p class="notice">Достигнут лимит поиска. Для остальных игр выберите более узкую папку.</p>':''}${scan.items.length?`<div class="library-scan-tools">${button('Выбрать все')}${button('Снять выбор')}</div><div class="library-scan-list">${scan.items.map(item=>`<label class="library-scan-row"><input type="checkbox" value="${Number(item.index)}" ${item.present?'disabled':''}><span><strong>${esc(item.title)}</strong><small>${esc(item.path)}${item.present?' · уже в библиотеке':''}</small></span></label>`).join('')}</div>`:'<p class="notice">Подходящих установленных игр не найдено.</p>'}${status()}<div class="dialog-actions">${close}${button('Добавить выбранные','primary')}</div></section>`,{eyebrow:'ЛОКАЛЬНАЯ БИБЛИОТЕКА'});
+  const scan=await api.scanLibrary(kind);if(!scan||!isCurrent())return;return showScan(scan,kind);
+ }
+ function showScan(scan,kind){
+  const store={epic:'Epic',gog:'GOG',itch:'itch.io'}[kind];
+  showDialog(kind==='steam'?'Импорт из Steam':kind==='drop'?'Перетащенные игры':store?'Импорт из '+store:'Установленные игры',`<section id="library-scan"><p class="muted">${kind==='steam'?'Найдены установленные игры в выбранной библиотеке Steam. Запуск будет происходить через Steam.':'Отметьте исполняемые файлы игр. Поиск не запускает найденные файлы; служебные программы могут встречаться в результатах.'}</p>${scan.limited?'<p class="notice">Достигнут лимит поиска. Для остальных игр выберите более узкую папку.</p>':''}${scan.items.length?`<div class="library-scan-tools">${button('Выбрать все')}${button('Снять выбор')}</div><div class="library-scan-list">${scan.items.map(item=>`<label class="library-scan-row"><input type="checkbox" value="${Number(item.index)}" ${item.present?'disabled':''}><span><strong>${esc(item.title)}</strong><small>${esc(item.path)}${item.present?' · уже в библиотеке':''}</small></span></label>`).join('')}</div>`:'<p class="notice">Подходящих установленных игр не найдено.</p>'}${status()}<div class="dialog-actions">${close}${button('Добавить выбранные','primary')}</div></section>`,{eyebrow:'ЛОКАЛЬНАЯ БИБЛИОТЕКА'});
   const pane=$('#library-scan'),items=[...pane.querySelectorAll('input[type=checkbox]:not(:disabled)')],label=$('[role=status]',pane),commit=$('[data-tool="Добавить выбранные"]',pane);
   const indices=()=>items.filter(x=>x.checked).map(x=>Number(x.value));
   const update=()=>{const count=indices().length;commit.disabled=!count;label.textContent=`Выбрано: ${count} из ${items.length}`;label.classList.remove('is-error');};
@@ -79,5 +82,5 @@ export function libraryTools({api,dialog,showDialog,esc,icon:I,notify,refreshLib
   const pane=$('#backup-delete');$('#backup-back',pane).onclick=()=>backups(g);
   action(pane,'Удалить копию',async()=>{await api.deleteSaveBackup(g.id,id);if(at(pane))await backups(g);notify('Резервная копия удалена.');});
  }
- return {openScan,folders,backups};
+ return {openScan,showScan,folders,backups};
 }

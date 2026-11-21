@@ -1,3 +1,4 @@
+const {cleanPlans}=require('../public/play-plans.js');
 const {cleanHome}=require('../public/home-layout.js');
 const {cleanStore}=require('./steam-detail.cjs');
 const {cleanWorkbench}=require('./source-workbench.cjs');
@@ -13,7 +14,8 @@ const defaults = {name:'Игрок', theme:'dark', motion:false, region:'DE'};
 const startSections=new Set(['home','catalog','library','downloads','sources','rankings','journal']);
 const classicIds=new Set(classicThemes.map(t=>t.id));
 function updateSettings(raw = {}) {
-  return {name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0,32) : defaults.name,
+  raw=raw&&typeof raw==='object'?raw:{};
+  return {localOnly:raw.localOnly===true,name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0,32) : defaults.name,
     theme: isTheme(raw.theme) ? raw.theme : defaults.theme,
     personal:cleanPersonal(raw.personal),
     homeWidgets:cleanHome(raw.homeWidgets),
@@ -22,10 +24,11 @@ function updateSettings(raw = {}) {
     startSection:startSections.has(raw.startSection)?raw.startSection:'home',
     motion: raw.motion === true, region: ['DE','US','GB','FR','PL','CA','UA','KZ','BR','JP','RU'].includes(raw.region) ? raw.region : defaults.region};
 }
-function readState(file) {
+function readState(file,{capture}={}) {
   let data = {};
   try { data = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch(e) { if (e.code !== 'ENOENT') throw Error('Не удалось прочитать файл данных: ' + e.message); }
-  return {settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], sourcePresetRevision:data.sourcePresetRevision || 0, downloads:data.downloads || [], downloadOptions:transferOptions(data.downloadOptions),journal:cleanJournal(data.journal),sourceWorkbench:cleanWorkbench(data.sourceWorkbench),steamDesk:cleanStore(data.steamDesk),syncFolder:typeof data.syncFolder==='string'?data.syncFolder.slice(0,1000):'',notifications:Array.isArray(data.notifications)?data.notifications.slice(0,80):[]};
+  if(data.settings&&typeof data.settings==='object')capture?.(data.settings);
+  return {appVersion:typeof data.appVersion==='string'?data.appVersion:'',plans:cleanPlans(data.plans),shortcuts:Array.isArray(data.shortcuts)?data.shortcuts.slice(0,200):[],settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], sourcePresetRevision:data.sourcePresetRevision || 0, downloads:data.downloads || [], downloadOptions:transferOptions(data.downloadOptions),journal:cleanJournal(data.journal),sourceWorkbench:cleanWorkbench(data.sourceWorkbench),steamDesk:cleanStore(data.steamDesk),syncFolder:typeof data.syncFolder==='string'?data.syncFolder.slice(0,1000):'',notifications:Array.isArray(data.notifications)?data.notifications.slice(0,80):[]};
 }
 function saveState(file,data) {
   fs.mkdirSync(path.dirname(file),{recursive:true});

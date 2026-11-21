@@ -148,3 +148,29 @@ test('queue discovers its seed via a real UDP tracker and verifies the saved fil
   await new Promise(resolve=>tracker.close(resolve));
  }
 });
+test('a real multi-file torrent waits for selection and publishes only verified chosen files', {timeout:16000},async t=>{
+ const root=await temp(t),{default:Client}=await import('webtorrent');
+ const sender=new Client({tracker:false,dht:false,lsd:false,utPex:false,utp:false,natUpnp:false,natPmp:false});
+ try{
+  const one=Buffer.alloc(35217,0x31),two=Buffer.alloc(290517,0x52);
+  const seeded=await new Promise((resolve,reject)=>{sender.once('error',reject);sender.seed([new File([one],'chosen.bin'),new File([two],'not-chosen.bin')],{name:'fixture-multi',pieceLength:16384},resolve);});
+  class LocalFixtureClient extends Client{
+   constructor(opts){super({...opts,tracker:false,dht:false});}
+   set blocked(_){} get blocked(){return null;}
+   add(...args){const torrent=super.add(...args);torrent.once('infoHash',()=>torrent.addPeer('127.0.0.1:'+sender.torrentPort));return torrent;}
+  }
+  const items=[],queue=new DownloadQueue(items,()=>{},{torrent:(job,signal,persist,opts)=>torrentDownload(job,signal,persist,{...opts,engine:LocalFixtureClient,metadataTimeout:5000,pieceIdleMs:4500})});
+  queue.addTorrent(seeded.magnetURI,root,'Selective',undefined,true);const job=items[0];
+  for(let i=0;i<140&&job.phase!=='selecting-files'&&job.status!=='error';i++)await wait(50);
+  assert.equal(job.phase,'selecting-files',job.error);assert.equal(job.bytes,0);
+  const files=queue.torrentFiles(job.id,1);assert.equal(files.total,2);
+  const chosen=files.rows.find(f=>path.basename(f.name)==='chosen.bin');assert.ok(chosen);
+  assert.throws(()=>queue.setTorrentFiles(job.id,[-1]),/Отметьте/);
+  queue.setTorrentFiles(job.id,[chosen.index]);
+  for(let i=0;i<140&&!['done','error'].includes(job.status);i++)await wait(50);
+  assert.equal(job.status,'done',job.error);assert.equal(job.total,one.length);assert.equal(job.bytes,one.length);
+  assert.ok((await fsp.readFile(path.join(job.file,chosen.name))).equals(one));
+  await assert.rejects(fsp.stat(path.join(job.file,files.rows.find(f=>f.index!==chosen.index).name)));
+  await assert.rejects(fsp.stat(job.partial));
+ }finally{await new Promise(resolve=>sender.destroy(resolve));}
+});

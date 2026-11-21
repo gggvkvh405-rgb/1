@@ -1,3 +1,4 @@
+const {playPrefs}=require('../public/play-plans.js');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const {spawn} = require('node:child_process');
@@ -9,7 +10,7 @@ function cleanGame(input) {
     if (typeof p?.name !== 'string' || !p.name.trim() || !Array.isArray(p.args) || p.args.length > 64 || p.args.some(a => typeof a !== 'string' || a.length > 1024 || a.includes('\0'))) throw Error('Некорректный профиль запуска.');
     return {name: p.name.trim().slice(0, 50), args: p.args};
   });
-  return {title:input.title.trim(), favorite: input.favorite === true, collections, profiles,
+  return {playPrefs:playPrefs(input.playPrefs),title:input.title.trim(), favorite: input.favorite === true, collections, profiles,
     progress:progressStates.has(input.progress)?input.progress:'',
     rating:Number.isInteger(input.rating)&&input.rating>=1&&input.rating<=10?input.rating:0,
     notes:typeof input.notes==='string'?input.notes.trim().slice(0,4000):'' };

@@ -93,3 +93,23 @@ export function paletteAccent(rgba){
  const first=[...boxes.values()].sort((a,b)=>b[3]-a[3])[0];
  return first?'#'+first.slice(0,3).map(v=>Math.round(v/first[3]).toString(16).padStart(2,'0')).join(''):'#bfa9ff';
 }
+const VIDEO_LIMIT=80*1024*1024;
+export function videoMime(bytes){
+ if(bytes.length>=12&&ascii(bytes,4,'ftyp')&&bytes[0]===0&&bytes[1]===0)return 'video/mp4';
+ if(bytes.length>=4&&bytes[0]===0x1a&&bytes[1]===0x45&&bytes[2]===0xdf&&bytes[3]===0xa3&&new TextDecoder().decode(bytes).toLowerCase().includes('webm'))return 'video/webm';
+ return '';
+}
+export async function prepareVideo(file){
+ if(!file?.size||file.size>VIDEO_LIMIT)throw Error('Выберите MP4 или WebM до 80 МБ.');
+ const mime=videoMime(new Uint8Array(await file.slice(0,4096).arrayBuffer()));
+ if(!mime)throw Error('Файл не похож на MP4 или WebM.');
+ const blob=file.slice(0,file.size,mime),video=document.createElement('video'),url=URL.createObjectURL(blob);
+ let timer;
+ try{
+  await new Promise((resolve,reject)=>{video.preload='metadata';video.onloadedmetadata=resolve;video.onerror=()=>reject(Error('Кодек видео не поддерживается.'));timer=setTimeout(()=>reject(Error('Не удалось прочитать видео.')),8000);video.src=url;});
+  if(!video.videoWidth||!video.videoHeight||!Number.isFinite(video.duration)||video.duration<=0||video.duration>1200||video.videoWidth*video.videoHeight>3840*2160||Math.max(video.videoWidth,video.videoHeight)>4096)throw Error('Нужно видео до 4K и не длиннее 20 минут.');
+  return {blob,name:String(file.name||'Видеофон').replace(/[\x00-\x1f\x7f]/g,'').slice(0,120)};
+ }finally{clearTimeout(timer);video.onerror=null;video.onloadedmetadata=null;video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+}
+export const backgroundVideo={read:async()=>{const r=await transact('readonly',s=>s.get('video'));return r?.blob instanceof Blob&&['video/mp4','video/webm'].includes(r.blob.type)&&r.blob.size&&r.blob.size<=VIDEO_LIMIT?{blob:r.blob,name:String(r.name||'Видео').slice(0,120)}:null;},save:r=>transact('readwrite',s=>r?s.put(r,'video'):s.delete('video'))};
+export const userThemeStore={read:async()=>{const r=await transact('readonly',s=>s.get('user-themes'));return Array.isArray(r)?r.slice(0,12):[];},save:rows=>transact('readwrite',s=>s.put(rows.slice(0,12),'user-themes'))};

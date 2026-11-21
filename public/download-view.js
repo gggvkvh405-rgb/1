@@ -1,4 +1,4 @@
-export const transferStages={connecting:'Подключение',metadata:'Поиск участников','waiting-metadata':'Ожидаем метаданные',pieces:'BitTorrent · обмен данными',transfer:'Передача файла',saving:'Сохранение',verifying:'Проверка SHA-256'};
+export const transferStages={connecting:'Подключение',metadata:'Поиск участников','waiting-metadata':'Ожидаем метаданные','selecting-files':'Ожидаем выбора файлов',pieces:'BitTorrent · обмен данными',transfer:'Передача файла',saving:'Сохранение',verifying:'Проверка SHA-256'};
 export const transferStatuses={queued:'В очереди',running:'Скачивается',paused:'На паузе',pausing:'Останавливается',canceling:'Отменяется',canceled:'Отменено',scheduling:'Пауза по расписанию',removing:'Удаляется',error:'Ошибка',done:'Завершено'};
 export function humanBytes(n){if(n==null)return 'Размер неизвестен';const units=['Б','КБ','МБ','ГБ','ТБ'],p=n>0?Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024)))):0;return (n/1024**p).toLocaleString('ru',{maximumFractionDigits:p?1:0})+' '+units[p];}
 export function humanEta(seconds){

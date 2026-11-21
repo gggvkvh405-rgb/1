@@ -32,10 +32,10 @@ export function journalCSV(sessions,library){
  const info=new Map(library.map(g=>[g.id,g]));
  return '\ufeff'+[['Дата','Игра','Секунды','Тип записи','Оценка'],...sessions.map(s=>[s.day,info.get(s.gameId)?.title||s.title,s.seconds,s.manual?'Вручную':'ByAzen',info.get(s.gameId)?.rating||''])].map(row=>row.map(quote).join(';')).join('\r\n');
 }
-export function suggestGames(library,sessions,minutes,collection){
+export function suggestGames(library,sessions,minutes,collection,prefs={}){
  const totals=new Map();for(const s of sessions){const x=totals.get(s.gameId)||[0,0];x[0]+=s.seconds;x[1]++;totals.set(s.gameId,x);}
- return library.filter(g=>g.progress!=='finished'&&g.progress!=='shelved'&&(!collection||g.collections?.includes(collection))).map(g=>{
-  const t=totals.get(g.id),usual=t?Math.ceil(t[0]/t[1]/60):null;
+ return library.filter(g=>g.progress!=='finished'&&g.progress!=='shelved'&&(!collection||g.collections?.includes(collection))&&(!prefs.mood||g.playPrefs?.mood===prefs.mood)&&(!prefs.mode||g.playPrefs?.mode===prefs.mode)).map(g=>{
+  const t=totals.get(g.id),usual=g.playPrefs?.minutes||(t?Math.ceil(t[0]/t[1]/60):null);
   return {game:g,usual};
  }).filter(row=>!row.usual||row.usual<=minutes).sort((a,b)=>Number(b.usual!==null)-Number(a.usual!==null)||Number(Boolean(b.game.favorite))-Number(Boolean(a.game.favorite))||a.game.title.localeCompare(b.game.title,'ru')).slice(0,5);
 }

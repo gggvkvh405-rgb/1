@@ -65,6 +65,20 @@ function filePlan(files){
   return {file,relative:path.join(...pieces)};
  });
 }
+function selectedFiles(files,indices){
+ if(!Array.isArray(indices)||!indices.length||indices.length>files.length||indices.some(i=>!Number.isInteger(i)||i<0||i>=files.length))throw Error('Выберите файлы из метаданных торрента.');
+ return [...new Set(indices)].sort((a,b)=>a-b).map(i=>files[i]);
+}
+function pieceRanges(files,pieceLength){
+ if(!Number.isSafeInteger(pieceLength)||pieceLength<=0)throw Error('Некорректный размер части торрента.');
+ const ranges=[];
+ for(const file of files){
+  if(!Number.isSafeInteger(file.length)||!Number.isSafeInteger(file.offset)||file.length<0||file.offset<0||!Number.isSafeInteger(file.length+file.offset))throw Error('Некорректный размер файла торрента.');
+  if(file.length)ranges.push([Math.floor(file.offset/pieceLength),Math.floor((file.offset+file.length-1)/pieceLength)]);
+ }
+ ranges.sort((a,b)=>a[0]-b[0]);const out=[];
+ for(const [a,b] of ranges){const last=out.at(-1);if(last&&a<=last[1]+1)last[1]=Math.max(b,last[1]);else out.push([a,b]);}return out;
+}
 async function publish(job,files,signal){
  const plan=filePlan(files), stage=path.join(job.partial,'payload');
  await fsp.rm(stage,{recursive:true,force:true});
@@ -83,7 +97,7 @@ async function publish(job,files,signal){
   await fsp.rename(stage,job.file);
  }finally{await fsp.rm(stage,{recursive:true,force:true});}
 }
-async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000,pieceIdleMs=180000,stats={},receiveLimit=0,sendLimit=128*1024,checkSpace=ensureSpace}={}){
+async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000,pieceIdleMs=180000,stats={},receiveLimit=0,sendLimit=128*1024,checkSpace=ensureSpace,chooseFiles}={}){
  const uri=await pin(job.url);
  Object.assign(stats,{trackers:new URL(uri).searchParams.getAll('tr').length,trackerReplies:0,peers:0,peakPeers:0,dht:false});
  signal.throwIfAborted();
@@ -100,10 +114,11 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
  signal.throwIfAborted();
  const client=new Client({tracker:{},natUpnp:false,natPmp:false,lsd:false,utPex:false,webSeeds:false,utp:false,maxConns:35,seedOutgoingConnections:false,uploadLimit:sendLimit,downloadLimit:receiveLimit||-1});
  client.blocked={contains:host=>!isPublic(host)};
- let cleanupWait=null, torrent, finished=false, failure;
+ let cleanupWait=null, torrent, finished=false, failure, picked=null,ranges=null,totalPicked=0,lastTracked=0;
  const onFail=e=>{failure?.(e);};
  client.on('error',onFail);
- function track(){
+ function track(force=false){
+  if(picked){if(!force&&Date.now()-lastTracked<500)return;lastTracked=Date.now();job.total=totalPicked;job.bytes=force?totalPicked:Math.min(totalPicked,picked.reduce((n,f)=>n+(f.done?f.length:f.downloaded||0),0));return;}
   if(typeof torrent?.length==='number'&&torrent.length>0){job.total=torrent.length;job.bytes=Math.min(job.total,torrent.downloaded||0);}
  }
  try{
@@ -135,8 +150,19 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
    torrent.once('metadata',()=>{
     clearTimeout(timeout);
     validated=Promise.resolve().then(async()=>{
-     filePlan(torrent.files);
-     if(torrent.length>0){
+     const plan=filePlan(torrent.files);
+     if(job.pickFiles===true){
+      if(!job.selection){
+       if(!chooseFiles)throw Error('Предпросмотр файлов недоступен.');
+       job.phase='selecting-files';job.total=null;job.bytes=0;
+       const pending=chooseFiles(plan.map(({file,relative})=>({name:relative,size:file.length})));persist();
+       const indices=await pending;signal.throwIfAborted();selectedFiles(torrent.files,indices);job.selection=indices;persist();
+      }
+      picked=selectedFiles(torrent.files,job.selection);ranges=pieceRanges(picked,torrent.pieceLength);
+      totalPicked=picked.reduce((n,f)=>n+f.length,0);
+      const footprint=ranges.reduce((n,[a,b])=>n+Math.min(torrent.length,(b+1)*torrent.pieceLength)-a*torrent.pieceLength,0);
+      if(footprint+totalPicked>0)await checkSpace(path.dirname(job.file||job.partial),footprint+totalPicked);
+     }else if(torrent.length>0){
       // Space for pending blocks plus a second copy while publishing across files.
       const allocated=previous?.blocks>0?Math.min(torrent.length,previous.blocks*512):0;
       await checkSpace(path.dirname(job.file||job.partial),torrent.length*2-allocated);
@@ -147,15 +173,20 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
    torrent.once('ready',()=>validated.then(()=>{
     if(signal.aborted||torrent.destroyed)return;
     job.phase='pieces';track();persist();
-    if(torrent.pieces?.length)torrent.select(0,torrent.pieces.length-1);
+    if(picked){
+     const done=()=>{if(picked.every(f=>f.done||f.length===0)){clearTimeout(pieceIdle);pieceIdle=undefined;resolve();return true;}return false;};
+     if(done())return;
+     for(const file of picked)if(!file.done&&file.length)file.once('done',done);
+     for(const [a,b] of ranges)torrent.select(a,b);
+    }else if(torrent.pieces?.length)torrent.select(0,torrent.pieces.length-1);
     watchPieces();
    },reject));
    torrent.on('download',()=>{track();if(pieceIdle)watchPieces();});
-   torrent.once('done',()=>validated.then(()=>{clearTimeout(pieceIdle);pieceIdle=undefined;resolve();},reject));
+   torrent.once('done',()=>validated.then(()=>{if(!picked){clearTimeout(pieceIdle);pieceIdle=undefined;resolve();}},reject));
   });
-  signal.throwIfAborted();track();
+  signal.throwIfAborted();track(true);
   job.phase='saving';persist();
-  await publish(job,torrent.files,signal);
+  await publish(job,picked||torrent.files,signal);
   finished=true;
  }finally{
   cleanupWait?.();failure=null;
@@ -163,4 +194,4 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
   if(finished)await fsp.rm(job.partial,{recursive:true,force:true}).catch(()=>{});
  }
 }
-module.exports={torrentDownload,magnetV1,prepareMagnet,filePlan};
+module.exports={torrentDownload,magnetV1,prepareMagnet,filePlan,selectedFiles,pieceRanges};

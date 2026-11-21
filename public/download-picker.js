@@ -14,7 +14,7 @@ export function describeLink(raw){
  return {label:'Неизвестная ссылка',detail:'Формат не поддерживается',supported:false};
 }
 
-export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,onPick,isCurrent,onDetails,onBookmark}){
+export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,onPick,isCurrent,onDetails,onBookmark,selectFiles,isLocal}){
  const art=product.image?`<img alt="" src="${esc(product.image)}">`:'';
  showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p>${onDetails?'<button type="button" class="btn" id="picker-game-details">Карточка Steam</button>':''}</div></header><div class="picker-main" aria-busy="true"></div><div class="picker-related" hidden></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
  const view=dialog.querySelector('.download-picker'), main=view.querySelector('.picker-main'), related=view.querySelector('.picker-related');
@@ -92,15 +92,16 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
    const game=await api.sourceGame(group.id,item.index,item.title);
    if(!alive()||ticket!==serial||groupIndex!==i)return;
    const links=game.links.map(describeLink);let picked=Math.max(0,links.findIndex(link=>link.supported));
-   transfer.innerHTML=`${links.length>1?`<label class="picker-method-label">Способ загрузки<select class="picker-method">${links.map((link,k)=>`<option value="${k}" ${k===picked?'selected':''} ${link.supported?'':'disabled'}>${k+1}. ${esc(link.label)} · ${esc(link.detail)}</option>`).join('')}</select></label>`:''}<div class="picker-transport">${I('link')}<div><strong></strong><small></small></div></div><p class="picker-feedback" role="status"></p><button type="button" class="btn primary picker-download">${I('download')} Скачать в ByAzen</button>${onBookmark?'<button type="button" class="btn" id="picker-bookmark">В закладки</button>':''}`;
+   transfer.innerHTML=`${links.length>1?`<label class="picker-method-label">Способ загрузки<select class="picker-method">${links.map((link,k)=>`<option value="${k}" ${k===picked?'selected':''} ${link.supported?'':'disabled'}>${k+1}. ${esc(link.label)} · ${esc(link.detail)}</option>`).join('')}</select></label>`:''}<div class="picker-transport">${I('link')}<div><strong></strong><small></small></div></div><p class="picker-feedback" role="status"></p><button type="button" class="btn primary picker-download">${I('download')} Скачать в ByAzen</button>${selectFiles?'<label class="toggle picker-file-choice" hidden><input type="checkbox"> Выбрать файлы после чтения метаданных</label>':''}${onBookmark?'<button type="button" class="btn" id="picker-bookmark">В закладки</button>':''}`;
    const bookmark=transfer.querySelector('#picker-bookmark');if(bookmark)bookmark.onclick=()=>{if(alive())onBookmark(group.id,item);};
-   const button=transfer.querySelector('.picker-download'), status=transfer.querySelector('.picker-feedback');
+   const button=transfer.querySelector('.picker-download'), status=transfer.querySelector('.picker-feedback'),choice=transfer.querySelector('.picker-file-choice');
    function setLink(k){
     picked=k;
     const link=links[k];
     transfer.querySelector('.picker-transport strong').textContent=link?.label||'Нет ссылки';
     transfer.querySelector('.picker-transport small').textContent=link?.detail||'Выбери другую версию или источник.';
-    status.textContent='';button.disabled=!link?.supported;
+    status.textContent=isLocal?'Загрузки отключены в локальном режиме.':'';button.disabled=isLocal||!link?.supported;
+    if(choice)choice.hidden=!game.links[k]?.startsWith('magnet:')||isLocal;
    }
    const method=transfer.querySelector('select');if(method)method.onchange=()=>setLink(Number(method.value));
    setLink(picked);reveal(transfer,'.picker-transport,.picker-download','rise',{step:30});
@@ -111,7 +112,7 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
     controls.forEach(el=>el.disabled=true);
     status.textContent='Выбери место сохранения…';
     try{
-     const added=await api.openSource(game.id,game.index,picked,'download',game.links[picked]);
+     const added=await api.openSource(game.id,game.index,picked,choice&&!choice.hidden&&choice.firstElementChild.checked?'select-download':'download',game.links[picked]);
      if(added&&alive()){dialog.close();onAdded();}
      else if(alive())status.textContent='';
     }catch(e){if(alive())status.textContent=e.message;}

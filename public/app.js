@@ -1,3 +1,6 @@
+import {finaleTools} from './finale-view.js';
+import {backgroundTools} from './background-finale.js';
+import {moods,playModes,playPrefs} from './play-plans.js';
 import {fileTools} from './file-workbench.js';
 import {cleanHome,setupHomeLayout} from './home-layout.js';
 import {catalogTools,productId} from './catalog-workbench.js';
@@ -10,7 +13,7 @@ import {makeLibraryWave} from './library-wave.js';
 import {cleanAppearance,applyAppearance} from './appearance.js';
 import {libraryTools} from './library-tools.js';
 import {humanBytes,isHistory,transferLabel,rateLabel,discoveryLabel} from './download-view.js';
-import {prepareWallpaper,readWallpaper,saveWallpaper,slideshowIO,deriveAccent} from './wallpaper-store.js';
+import {prepareWallpaper,readWallpaper,saveWallpaper,slideshowIO,deriveAccent,backgroundVideo} from './wallpaper-store.js';
 import {collections,sceneCollections,sceneThemes,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
 import {openDownloadPicker} from './download-picker.js';
 import {motionAllowed,syncMotion,play,reveal,revealSection} from './motion.js';
@@ -24,7 +27,9 @@ const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],journal:['Журнал','clock'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
 const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',srcGrouped:false,themeGroup:'',themeQuery:'',wallpaper:null,slides:[],downloadTab:'active'};
-let appearanceRuntime={safe:false,battery:false,playing:false};
+let appearanceRuntime={safe:false,battery:false,playing:false,localOnly:false};
+let wallVideo=null,videoURL;
+const isLocal=()=>appearanceRuntime.localOnly===true;
 let renderId=0,customURL,disposeWallpaperPreview,slideURL,slideIndex=0,slideStarted=0,sessionNotices=[];
 function rememberToast(text,error){
  if(!error)return;
@@ -47,7 +52,7 @@ function sidebar(){
  $('#nav').innerHTML=cleanPersonal(state.settings.personal).nav.map(id=>[id,sections[id]]).map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
  const shortcut=$('#source-shortcut');
  if(state.section==='sources')shortcut.setAttribute('aria-current','page');else shortcut.removeAttribute('aria-current');
- $('#profile').innerHTML=`<span class="avatar">${I('user')}</span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>ByAzen</small></span><img class="profile-brand" src="assets/logo.svg" alt="">${I('down','profile-arrow')}`;
+ $('#profile').innerHTML=`<span class="avatar">${I('user')}</span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>${isLocal()?'Локальный режим':'ByAzen'}</small></span><img class="profile-brand" src="assets/logo.svg" alt="">${I('down','profile-arrow')}`;
  $('#side-games').innerHTML=state.library.length ? [...state.library].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||(b.lastPlayed||'').localeCompare(a.lastPlayed||'')).slice(0,6).map(g=>`<button class="side-game" data-action="edit-game" data-id="${esc(g.id)}" title="${esc(g.title)}">${I('game')}<span>${esc(g.title)}</span></button>`).join('') : `<button class="side-game muted" data-action="new-game" title="Добавить игру">${I('plus')}<span>Добавить игру</span></button>`;
 }
 function go(section){if(!Object.hasOwn(sections,section))return;const changed=section!==state.section;state.section=section;applyTheme();document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();if(changed)reveal($('.sidebar'),'[aria-current=page] svg','pop');run(render);}
@@ -140,7 +145,7 @@ async function catalog(n){
    results.querySelectorAll('.catalog-badges').forEach((el,i)=>{const html=badgesFor(rows[i]);if(el.innerHTML!==html)el.innerHTML=html;});
    return;
   }
-  const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>Steam недоступен. Показана локальная подборка без актуальных цен и наличия. Цены, скидки, режимы и сроки релиза не подтверждены.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
+  const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>${isLocal()?'Локальный режим: Steam не опрашивается.':'Steam недоступен.'} Показана локальная подборка без актуальных цен и наличия. Цены, скидки, режимы и сроки релиза не подтверждены.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
   const list=rows.length?`<div class="catalog-list">${rows.map(g=>{
    const meta=catalogMeta(g), price=g.price||'', badge=badgesFor(g);
    return `<button type="button" class="catalog-row" data-action="catalog-game" data-url="${esc(g.url||'')}" data-image="${esc(g.image||'')}" data-title="${esc(g.title)}" title="Открыть ${esc(g.title)}"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
@@ -197,7 +202,7 @@ async function catalog(n){
    `<button type="button" class="text-btn" data-action="source-url">${I('plus')} Добавить по ссылке</button><button type="button" class="text-btn" data-go="sources">Управлять источниками ${I('arrow')}</button>`;
   drawPage();
  }).catch(()=>{if(current(n))sourceBox.textContent='Не удалось загрузить источники.';});
- try{pageResult=await api.steam({...f,cc:f.cc||state.settings.region});}
+ try{pageResult=isLocal()?offlineResults(f):await api.steam({...f,cc:f.cc||state.settings.region});}
  catch(e){offlineReason=e.message;pageResult=offlineResults(f);}
  if(!current(n))return;
  drawPage();
@@ -241,24 +246,28 @@ function setRuntime(value){appearanceRuntime=value;applyTheme();const button=$('
 const filesTools=fileTools({api,dialog,showDialog,esc,btn,run,toast,library:()=>state.library,refresh:refreshLibrary,
  refreshSettings:async()=>{state.settings=await api.settings();applyTheme();sidebar();if(state.section==='settings')await render();},
  bytes:humanBytes,getRuntime:()=>appearanceRuntime,setRuntime});
+const finale=finaleTools({api,dialog,showDialog,esc,btn,run,toast,library:()=>state.library,refresh:refreshLibrary,confirmBytes:humanBytes,isLocal});
+const backgrounds=backgroundTools({dialog,showDialog,esc,btn,run,toast,setVideo,getVideo:()=>wallVideo,importLook:applyThemePackage});
 const libraryWave=makeLibraryWave({api,dialog,showDialog,esc,btn,get:()=>state.library,refresh:refreshLibrary,run,notify:toast});
 const journalView=makeJournalView({api,content,showDialog,dialog,esc,icon:I,head,btn,getLibrary:()=>state.library,exportFile,run,notify:toast,isCurrent:current});
 function library(){
  const collections=[...new Set(state.library.flatMap(g=>g.collections))].sort((a,b)=>a.localeCompare(b,'ru'));
  let rows=state.library.filter(g=>(state.libraryFilter==='all'||(state.libraryFilter==='fav'&&g.favorite)||(state.libraryFilter==='recent'&&g.lastPlayed))&&(!state.collection||g.collections.includes(state.collection))&&(!state.libraryProgress||g.progress===state.libraryProgress));
  if(state.libraryFilter==='recent')rows.sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed));
- content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${api.saveBatch?btn('Массовое редактирование','library-batch','edit'):''}${api.previewMove?btn('Исправить пути','library-move','folder'):''}${api.exportCollection?btn('Поделиться коллекцией','collection-share','external'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
+ content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${api.previewDropped?btn('Импорт из магазинов','import-stores','layers'):''}${api.saveBatch?btn('Массовое редактирование','library-batch','edit'):''}${api.previewMove?btn('Исправить пути','library-move','folder'):''}${api.exportCollection?btn('Поделиться коллекцией','collection-share','external'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
+ ${api.previewDropped?`<div class="library-drop-area" id="library-drop">${I('folder')} Перетащи сюда EXE или ярлыки .lnk для предпросмотра</div>`:''}
  <div class="toolbar"><div class="tabs">${[['all','game','Все игры'],['fav','star','Избранное'],['recent','clock','Недавние']].map(([k,g,l])=>`<button class="tab ${state.libraryFilter===k?'selected':''}" data-action="library-tab" data-tab="${k}">${I(g)}${l}</button>`).join('')}</div><div class="row">${pick('collection',[['','Все коллекции'],...collections.map(c=>[c,c])],state.collection,'Коллекция')}${pick('library-progress',[['','Любой статус'],...gameProgress],state.libraryProgress,'Статус прохождения')}</div></div>
- ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}${(g.tags||[]).map(c=>`<span class="chip">#${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>${g.exe&&api.requiredFiles?`<button class="btn" data-action="game-required" data-id="${esc(g.id)}">Проверка файлов</button>`:''}${api.syncFolder?`<button class="btn" data-action="game-sync" data-id="${esc(g.id)}">Копии в папку</button>`:''}${api.screenshots?`<button class="btn" data-action="game-screenshots" data-id="${esc(g.id)}">Скриншоты</button>`:''}`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
+ ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${!isLocal()&&steamCover(g.steamCover)?`<img class="library-cover" src="${esc(g.steamCover)}" alt="">`:g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}${(g.tags||[]).map(c=>`<span class="chip">#${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>${api.coverCandidates?`<button class="btn" data-action="game-cover" data-id="${esc(g.id)}">Обложка</button>`:''}${api.gameShortcut&&(g.exe||g.steamAppId)?`<button class="btn" data-action="game-shortcut" data-id="${esc(g.id)}">Ярлык</button>`:''}${g.exe&&api.requiredFiles?`<button class="btn" data-action="game-required" data-id="${esc(g.id)}">Проверка файлов</button>`:''}${api.syncFolder?`<button class="btn" data-action="game-sync" data-id="${esc(g.id)}">Копии в папку</button>`:''}${api.screenshots?`<button class="btn" data-action="game-screenshots" data-id="${esc(g.id)}">Скриншоты</button>`:''}`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
  $('[name="collection"]').onchange=e=>{state.collection=e.target.value;run(render);};
  $('[name="library-progress"]').onchange=e=>{state.libraryProgress=e.target.value;run(render);};
 }
 let chosenExe=null;
 function profileRow(p={name:'',args:[]}){return `<div class="profile-row"><input required maxlength="50" data-profile-name value="${esc(p.name)}" placeholder="Название профиля" aria-label="Название профиля"><textarea rows="2" data-profile-args placeholder="Один аргумент на строку" aria-label="Аргументы запуска">${esc(p.args.join('\n'))}</textarea><button type="button" class="icon-btn" data-action="profile-remove" aria-label="Удалить профиль">${I('close')}</button></div>`;}
+function steamCover(value){try{const u=new URL(value);return u.protocol==='https:'&&!u.port&&!u.username&&!u.password&&(u.hostname.endsWith('.steamstatic.com')||u.hostname==='steamcdn-a.akamaihd.net');}catch{return false;}}
 function editGame(g){
- chosenExe=null;
- showDialog(g?'Редактировать игру':'Добавить игру',`<form id="game-form"><label class="field"><span>Название игры</span><input name="title" required maxlength="160" value="${esc(g?.title)}" placeholder="Например, Minecraft"></label><div class="field"><span>Исполняемый файл</span><div class="row exe-row"><span id="exe-path">${esc(g?.steamAppId?'Запускается через Steam':g?.exe||'Файл .exe не выбран')}</span>${btn('Выбрать .exe','choose-exe','folder')}</div></div><label class="field"><span>Коллекции</span><input name="collections" maxlength="750" value="${esc(g?.collections.join(', '))}" placeholder="Через запятую: RPG, На вечер"></label><div class="settings-fields"><label class="field"><span>Статус прохождения</span>${pick('progress',[['','Не задан'],...gameProgress],g?.progress||'','Статус прохождения')}</label><label class="field"><span>Моя оценка</span>${pick('rating',[['0','Без оценки'],...Array.from({length:10},(_,i)=>[String(i+1),`${i+1}/10`])],String(g?.rating||0),'Моя оценка')}</label></div><label class="field"><span>Заметки к игре</span><textarea name="notes" rows="3" maxlength="4000" placeholder="Где остановился, билд или планы…">${esc(g?.notes)}</textarea></label><label class="toggle"><input name="favorite" type="checkbox" ${g?.favorite?'checked':''}> В избранном</label><div class="profile-head"><strong>Профили запуска</strong>${btn('Добавить профиль','profile-add','plus')}</div><p class="muted small">${g?.steamAppId?'Для запуска через Steam эти аргументы не используются. ':''}Каждый аргумент укажите на отдельной строке, без внешних кавычек.</p><div id="profiles">${(g?.profiles||[]).map(profileRow).join('')}</div><div class="dialog-actions">${g?`<button type="button" class="btn danger" data-action="remove-game" data-id="${g.id}">Удалить игру</button>`:''}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></form>`);
- $('#game-form').onsubmit=e=>{e.preventDefault();const form=new FormData(e.currentTarget); const profiles=[...$('#profiles').children].map(node=>({name:$('[data-profile-name]',node).value,args:$('[data-profile-args]',node).value.split(/\r?\n/).filter(x=>x.length)}));run(async()=>{await api.saveGame(g?.id||null,{title:form.get('title'),collections:form.get('collections').split(','),favorite:form.has('favorite'),profiles,progress:form.get('progress'),rating:Number(form.get('rating')),notes:form.get('notes')},chosenExe?.token||null);await refreshLibrary();dialog.close();toast('Игра сохранена.');});};
+ chosenExe=null;const prefs=playPrefs(g?.playPrefs);
+ showDialog(g?'Редактировать игру':'Добавить игру',`<form id="game-form"><label class="field"><span>Название игры</span><input name="title" required maxlength="160" value="${esc(g?.title)}" placeholder="Например, Minecraft"></label><div class="field"><span>Исполняемый файл</span><div class="row exe-row"><span id="exe-path">${esc(g?.steamAppId?'Запускается через Steam':g?.exe||'Файл .exe не выбран')}</span>${btn('Выбрать .exe','choose-exe','folder')}</div></div><label class="field"><span>Коллекции</span><input name="collections" maxlength="750" value="${esc(g?.collections.join(', '))}" placeholder="Через запятую: RPG, На вечер"></label><div class="settings-fields"><label class="field"><span>Статус прохождения</span>${pick('progress',[['','Не задан'],...gameProgress],g?.progress||'','Статус прохождения')}</label><label class="field"><span>Моя оценка</span>${pick('rating',[['0','Без оценки'],...Array.from({length:10},(_,i)=>[String(i+1),`${i+1}/10`])],String(g?.rating||0),'Моя оценка')}</label></div><label class="field"><span>Заметки к игре</span><textarea name="notes" rows="3" maxlength="4000" placeholder="Где остановился, билд или планы…">${esc(g?.notes)}</textarea></label><label class="toggle"><input name="favorite" type="checkbox" ${g?.favorite?'checked':''}> В избранном</label><details class="play-prefs"><summary>Для подбора игры</summary><div class="settings-fields"><label class="field"><span>Настроение</span>${pick('mood',moods,prefs.mood,'Настроение игры')}</label><label class="field"><span>Режим</span>${pick('mode',playModes,prefs.mode,'Игровой режим')}</label><label class="field"><span>Обычная сессия, минут (необязательно)</span><input type="number" name="minutes" min="5" max="1440" value="${prefs.minutes||''}"></label></div></details><div class="profile-head"><strong>Профили запуска</strong>${btn('Добавить профиль','profile-add','plus')}</div><p class="muted small">${g?.steamAppId?'Для запуска через Steam эти аргументы не используются. ':''}Каждый аргумент укажите на отдельной строке, без внешних кавычек.</p><div id="profiles">${(g?.profiles||[]).map(profileRow).join('')}</div><div class="dialog-actions">${g?`<button type="button" class="btn danger" data-action="remove-game" data-id="${g.id}">Удалить игру</button>`:''}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></form>`);
+ $('#game-form').onsubmit=e=>{e.preventDefault();const form=new FormData(e.currentTarget); const profiles=[...$('#profiles').children].map(node=>({name:$('[data-profile-name]',node).value,args:$('[data-profile-args]',node).value.split(/\r?\n/).filter(x=>x.length)}));run(async()=>{await api.saveGame(g?.id||null,{title:form.get('title'),collections:form.get('collections').split(','),favorite:form.has('favorite'),profiles,progress:form.get('progress'),rating:Number(form.get('rating')),notes:form.get('notes'),playPrefs:{mood:form.get('mood'),mode:form.get('mode'),minutes:Number(form.get('minutes'))}},chosenExe?.token||null);await refreshLibrary();dialog.close();toast('Игра сохранена.');});};
 }
 async function refreshLibrary(){state.library=await api.library();if(!state.library.some(g=>g.collections.includes(state.collection)))state.collection='';sidebar();if(state.section==='library')await render();}
 function launchDialog(g){
@@ -273,8 +282,8 @@ function continueGame(g){
 }
 async function launch(id,p){await api.launchGame(id,p);await refreshLibrary();toast('Игра запущена.');}
 function downloads(n){
- const tools=`${api.checkDownload?btn('Проверить скачивание','download-check','check'):''}${api.saveDownloadOptions?btn('Настройки очереди','download-options','sliders'):''}${api.cleanupPreview?btn('Очистка временных','temp-files','folder'):''}${btn('Добавить загрузку','new-download','plus','primary')}`;
- content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками.',tools)}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div class="download-overview" id="dl-overview"></div><div class="tabs download-tabs" aria-label="Вкладки загрузок">${[['active','Очередь'],['history','История']].map(([id,label])=>`<button type="button" class="tab ${state.downloadTab===id?'selected':''}" aria-pressed="${state.downloadTab===id}" data-action="download-tab" data-tab="${id}">${I(id==='active'?'download':'clock')} ${label}</button>`).join('')}</div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
+ const tools=`${api.checkDownload&&!isLocal()?btn('Проверить скачивание','download-check','check'):''}${api.saveDownloadOptions?btn('Настройки очереди','download-options','sliders'):''}${api.cleanupPreview?btn('Очистка временных','temp-files','folder'):''}${isLocal()?'':btn('Добавить загрузку','new-download','plus','primary')}`;
+ content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками.',tools)}${isLocal()?'<p class="notice">Локальный режим: новые загрузки и возобновление отключены.</p>':''}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div class="download-overview" id="dl-overview"></div><div class="tabs download-tabs" aria-label="Вкладки загрузок">${[['active','Очередь'],['history','История']].map(([id,label])=>`<button type="button" class="tab ${state.downloadTab===id?'selected':''}" aria-pressed="${state.downloadTab===id}" data-action="download-tab" data-tab="${id}">${I(id==='active'?'download':'clock')} ${label}</button>`).join('')}</div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
  run(()=>refreshDownloads(n));
 }
 let downloadRead=0;
@@ -285,14 +294,14 @@ function downloadActions(j){
   ['first','В начало',['queued']],['normal','Снять приоритет',j.priority?['queued']:[]],
   ['pause','Пауза',locked?[]:['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],
   ['cancel','Отменить',locked?[]:['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]
- ].filter(([op,,states])=>states.includes(j.status)&&(op!=='first'||j.position!==1));
+ ].filter(([op,,states])=>states.includes(j.status)&&(op!=='first'||j.position!==1)&&(op!=='resume'||!isLocal()));
  if(api.revealDownload&&['done','error'].includes(j.status))buttons.push(['folder','Папка']);
  if(api.copyDownloadReport&&j.status==='error')buttons.push(['report','Копировать отчёт']);
  return buttons.map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('');
 }
 function downloadCard(j,allowed){
  const label=transferLabel(j,allowed),completed=j.completedAt&&isHistory(j)?` · ${esc(date(j.completedAt))}`:'';
- return `<article class="list-item dl-item" data-state="${esc(j.status)}"><span class="list-icon">${I(j.status==='error'?'alert':j.status==='done'?'check':'download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip ${j.status==='done'?'good':''}">${esc(label)}</span>${j.verified&&j.status==='done'?' <span class="chip good">SHA-256 проверен</span>':''}</h3><p>${esc(j.origin|| (j.kind==='torrent'?'BitTorrent':'HTTP(S)'))}${completed}</p><p title="${esc(j.file)}">${esc(j.file)}</p><progress class="sr-only" aria-label="Прогресс загрузки"></progress><div class="motion-meter" aria-hidden="true"><span></span></div><p class="dl-stats"></p><div class="dl-live" hidden><span></span><span class="dl-chart" aria-hidden="true">${'<i></i>'.repeat(12)}</span></div><p class="dl-discovery" hidden></p><p class="dl-error" hidden></p></div><div class="item-actions">${downloadActions(j)}</div></article>`;
+ return `<article class="list-item dl-item" data-state="${esc(j.status)}"><span class="list-icon">${I(j.status==='error'?'alert':j.status==='done'?'check':'download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip ${j.status==='done'?'good':''}">${esc(label)}</span>${j.verified&&j.status==='done'?' <span class="chip good">SHA-256 проверен</span>':''}</h3><p>${esc(j.origin|| (j.kind==='torrent'?'BitTorrent':'HTTP(S)'))}${completed}</p><p title="${esc(j.file)}">${esc(j.file)}</p><progress class="sr-only" aria-label="Прогресс загрузки"></progress><div class="motion-meter" aria-hidden="true"><span></span></div><p class="dl-stats"></p><div class="dl-live" hidden><span></span><span class="dl-chart" aria-hidden="true">${'<i></i>'.repeat(12)}</span></div><p class="dl-discovery" hidden></p><p class="dl-error" hidden></p></div><div class="item-actions">${downloadActions(j)}${api.torrentFiles&&j.status==='running'&&j.phase==='selecting-files'?`<button class="btn primary" data-action="torrent-files" data-id="${esc(j.id)}">Выбрать файлы</button>`:''}</div></article>`;
 }
 async function refreshDownloads(n){
  const request=++downloadRead,{items,options,allowed}=await downloadSnapshot(),target=$('#dl-list');
@@ -337,10 +346,11 @@ function downloadOptionsDialog(options){
  };
 }
 function addDownloadDialog(){
- showDialog('Новая загрузка',`<form id="new-download-form"><label class="field"><span>Прямая ссылка HTTP(S) или magnet</span><input name="url" required maxlength="4096" placeholder="https://… или magnet:?…" spellcheck="false"></label><label class="field"><span>SHA-256 (необязательно, только для HTTP/S)</span><input name="sha256" maxlength="64" pattern="[A-Fa-f0-9]{64}" spellcheck="false" placeholder="Контрольная сумма от издателя"></label><div class="dialog-actions">${btn('Отмена','close')}<button type="submit" class="btn primary">${I('folder')} Выбрать место</button></div></form>`);
+ showDialog('Новая загрузка',`<form id="new-download-form"><label class="field"><span>Прямая ссылка HTTP(S) или magnet</span><input name="url" required maxlength="4096" placeholder="https://… или magnet:?…" spellcheck="false"></label><label class="field"><span>SHA-256 (необязательно, только для HTTP/S)</span><input name="sha256" maxlength="64" pattern="[A-Fa-f0-9]{64}" spellcheck="false" placeholder="Контрольная сумма от издателя"></label>${api.torrentFiles?'<label class="toggle" id="download-file-option" hidden><input type="checkbox" name="pick"> Выбрать файлы после чтения метаданных</label>':''}<div class="dialog-actions">${btn('Отмена','close')}<button type="submit" class="btn primary">${I('folder')} Выбрать место</button></div></form>`);
  const form=$('#new-download-form');
+ const option=$('#download-file-option',form);if(option)form.elements.url.oninput=()=>{option.hidden=!form.elements.url.value.trim().startsWith('magnet:');};
  form.onsubmit=e=>{e.preventDefault();const values=new FormData(form),b=$('button[type=submit]',form);b.disabled=true;run(async()=>{
-  try{if(await api.addDownload(String(values.get('url')).trim(),String(values.get('sha256')).trim())){if(form.isConnected&&dialog.open)dialog.close();state.downloadTab='active';await render();toast('Загрузка добавлена.');}}
+  try{if(await api.addDownload(String(values.get('url')).trim(),String(values.get('sha256')).trim(),Boolean(option&&!option.hidden&&values.has('pick')))){if(form.isConnected&&dialog.open)dialog.close();state.downloadTab='active';await render();toast('Загрузка добавлена.');}}
   finally{b.disabled=false;}
  });};
 }
@@ -447,7 +457,7 @@ function openCatalogGame(product){
  if(!product)return;
  const version=renderId;
  const steamId=productId(product.url);
- openDownloadPicker(product,{api,dialog,showDialog,esc,date,onDetails:steamId&&api.steamDetail?()=>run(()=>catTools.detail(steamId)):null,onBookmark:api.sourceWorkbenchChange?(id,entry)=>run(async()=>{await api.sourceWorkbenchChange('bookmark',{id,index:entry.index,title:entry.title});toast('Версия добавлена в закладки.');}):null,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{state.downloadTab='active';go('downloads');toast('Загрузка добавлена.');}});
+ openDownloadPicker(product,{api,dialog,showDialog,esc,date,isLocal:isLocal(),selectFiles:Boolean(api.torrentFiles),onDetails:steamId&&api.steamDetail?()=>run(()=>catTools.detail(steamId)):null,onBookmark:api.sourceWorkbenchChange?(id,entry)=>run(async()=>{await api.sourceWorkbenchChange('bookmark',{id,index:entry.index,title:entry.title});toast('Версия добавлена в закладки.');}):null,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{state.downloadTab='active';go('downloads');toast('Загрузка добавлена.');}});
 }
 function setWallpaper(record){
  if(state.wallpaper?.blob!==record?.blob){
@@ -455,6 +465,11 @@ function setWallpaper(record){
   customURL=record?URL.createObjectURL(record.blob):undefined;
  }
  state.wallpaper=record;
+}
+function setVideo(record){
+ if(wallVideo?.blob===record?.blob)return;
+ const video=$('#theme-wall-video');video.pause();video.removeAttribute('src');video.load();
+ if(videoURL)URL.revokeObjectURL(videoURL);wallVideo=record;videoURL=record?URL.createObjectURL(record.blob):undefined;applyTheme();
 }
 function currentTheme(){return appearanceRuntime.safe?getTheme('dark'):getTheme(wallpaperTheme(cleanPersonal(state.settings.personal),state.section,state.settings.theme));}
 function applyTheme(){
@@ -472,10 +487,14 @@ function applyTheme(){
  root.style.setProperty('--second-hue',theme.alt);
  applyAppearance(root,appearanceRuntime.safe?{effects:0}:state.settings.appearance);
  root.classList.toggle('motion-off',Boolean(state.settings.motion||suppress));syncMotion();
- const wall=$('#theme-wall'),image=$('#theme-wall-image'),src=custom||theme.asset;
+ const wall=$('#theme-wall'),image=$('#theme-wall-image'),video=$('#theme-wall-video'),src=custom||theme.asset;
+ const playing=Boolean(videoURL&&!staged&&!appearanceRuntime.safe&&motionAllowed());
+ if(playing&&video.getAttribute('src')!==videoURL){video.src=videoURL;video.muted=true;}
+ video.hidden=!playing;
+ if(playing&&!document.hidden&&!appearanceRuntime.hidden){if(video.paused)void video.play().catch(()=>{});}else video.pause();
  wall.dataset.art=custom?'custom':(theme.art||'vector');
  wall.dataset.fit=custom&&!slideURL?state.wallpaper.fit:'cover';
- wall.hidden=!src;
+ wall.hidden=!src&&!playing;
  if(src&&image.getAttribute('src')!==src)image.src=src;
  if(!src)image.removeAttribute('src');
 }
@@ -635,11 +654,12 @@ function importThemeDialog(){
  };
  apply.onclick=()=>run(async()=>{
   if(!pending)return;apply.disabled=true;
-  try{const record=pending.wallpaper||(state.wallpaper?{...state.wallpaper,enabled:false}:null);await saveWallpaper(record);setWallpaper(record);await applySaved({theme:pending.theme,appearance:pending.appearance});if(form.isConnected&&dialog.open)dialog.close();if($('#themes'))drawThemes();toast('Оформление импортировано.');}
+  try{await applyThemePackage(pending);if(form.isConnected&&dialog.open)dialog.close();toast('Оформление импортировано.');}
   finally{apply.disabled=false;}
  });
 }
-const personalTools=setupPersonal({dialog,showDialog,esc,pick,icons:I,sections,get:()=>state.settings,save:applySaved,notify:toast,showSlides,exportTheme:()=>run(async()=>exportFile('theme',await packTheme(state.settings,state.wallpaper))),importTheme:importThemeDialog});
+async function applyThemePackage(pending){const record=pending.wallpaper||(state.wallpaper?{...state.wallpaper,enabled:false}:null);await saveWallpaper(record);setWallpaper(record);await applySaved({theme:pending.theme,appearance:pending.appearance});if($('#themes'))drawThemes();}
+const personalTools=setupPersonal({dialog,showDialog,esc,pick,icons:I,sections,get:()=>state.settings,save:applySaved,notify:toast,showSlides,showVideo:()=>backgrounds.video(),showUserThemes:()=>run(backgrounds.gallery),exportTheme:()=>run(async()=>exportFile('theme',await packTheme(state.settings,state.wallpaper))),importTheme:importThemeDialog});
 async function openNotifications(){
  const saved=api.notifications?await api.notifications():[];
  const rows=[...saved,...sessionNotices].sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,80);
@@ -650,7 +670,7 @@ async function openNotifications(){
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
  <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button>${btn('Оформление и управление','personal-settings','sliders')}${btn('Что нового','release-notes','spark')}</div>
- <div class="row settings-workbench">${api.statusCenter?btn('Центр состояния','health-center','check'):''}${api.diskReport?btn('Отчёт по месту','disk-report','folder'):''}${api.migrationExport?btn('Переезд на другой ПК','migration','file'):''}${api.syncFolder?btn('Папка синхронизации','sync-folder','folder'):''}${btn(appearanceRuntime.safe?'Восстановить оформление':'Классический режим','safe-appearance','alert')}</div>
+ <div class="row settings-workbench">${api.players?btn('Игроки','players','user'):''}${api.officialCheck&&!isLocal()?btn('Проверить обновление','official-update','refresh'):''}${api.localOnly?btn(isLocal()?'Вернуть доступ к сети':'Только локально','network-mode','folder'):''}${api.statusCenter?btn('Центр состояния','health-center','check'):''}${api.diskReport?btn('Отчёт по месту','disk-report','folder'):''}${api.migrationExport?btn('Переезд на другой ПК','migration','file'):''}${api.syncFolder?btn('Папка синхронизации','sync-folder','folder'):''}${btn(appearanceRuntime.safe?'Восстановить оформление':'Классический режим','safe-appearance','alert')}</div>
  <section class="theme-pane" id="themes" aria-label="Галерея тем" tabindex="-1"></section>
  <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label><label class="field"><span>Открывать при запуске</span>${pick('startSection',[['home','Главная'],['library','Библиотека'],['catalog','Каталог'],['downloads','Загрузки'],['sources','Источники'],['rankings','Рейтинги'],['journal','Журнал']],state.settings.startSection||'home','Открывать при запуске')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
  drawThemes();
@@ -667,6 +687,15 @@ async function dispatch(b){
  if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a)){const game=games.find(x=>x.id===Number(a.split('-')[1]));if(game)return openCatalogGame({...game,image:'assets/'+game.image+'.jpg'});}
  switch(a){
   case 'close':dialog.close();break;
+  case 'torrent-files':return finale.torrent(d.id);
+  case 'game-cover':if(g)return finale.covers(g);break;
+  case 'game-shortcut':if(g)return finale.shortcut(g);break;
+  case 'players':return finale.players();
+  case 'official-update':return finale.updates();
+  case 'network-mode':return finale.offline();
+  case 'coop-plans':return finale.plans();
+  case 'import-stores':return showDialog('Импорт из магазинов',`<p class="muted">Нужна локальная папка установленных игр. Epic также запрашивает папку манифестов. Найденные EXE не запускаются при импорте.</p><div class="row">${['epic','gog','itch'].map((id,i)=>`<button type="button" class="btn" data-action="scan-store" data-store="${id}">${['Epic Games','GOG','itch.io'][i]}</button>`).join('')}</div>`);
+  case 'scan-store':{const n=renderId;b.disabled=true;try{return await gamesTools.openScan(d.store,()=>current(n));}finally{b.disabled=false;}}
   case 'home-config':return homeLayout();
   case 'collection-share':return filesTools.share();
   case 'game-required':if(g)return filesTools.required(g);break;
@@ -720,7 +749,7 @@ async function dispatch(b){
   case 'favorite':return api.favorite(d.id).then(refreshLibrary);
   case 'remove-game':return confirmDialog('Удалить игру?', 'Это удалит запись из библиотеки, но не файлы игры и не резервные копии.',async()=>{await api.removeGame(d.id);await refreshLibrary();});
   case 'launch-dialog':if(g)return launchDialog(g);break;
-  case 'new-download':return addDownloadDialog();
+  case 'new-download':if(!isLocal())return addDownloadDialog();return toast('Загрузки отключены в локальном режиме.',true);
   case 'download-tab':state.downloadTab=d.tab==='history'?'history':'active';return render();
   case 'download-options':return downloadOptionsDialog((await downloadSnapshot()).options);
   case 'download-check':{
@@ -759,7 +788,7 @@ async function dispatch(b){
   case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
   case 'source-op':if(d.op==='manage')return feedsTools.manage(d.id);if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.groupTitle||game.title,preferred:game});break;}
-  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.25',`<ul class="release-list"><li>Поиск по ByAzen, карточки Steam, сравнение, желаемое, скидки и календарь.</li><li>Настройки источников: история, закладки, группировка, связи, выгрузка и пакетный импорт.</li><li>Переезд, отчёт по месту, проверка файлов, безопасное оформление, виджеты и карточка коллекции.</li></ul><h3>В версии 1.0.24</h3><ul class="release-list"><li>Слайд-шоу, расписание и фоны по разделам, свой звук, заставки и переносимые пакеты оформления.</li><li>Журнал: время, планы, события и статистика с экспортом.</li><li>Управление геймпадом, размер интерфейса, системный трей и история уведомлений.</li></ul><h3>В версии 1.0.23</h3><ul class="release-list"><li><strong>Библиотека:</strong> поиск EXE и импорт установленных игр Steam.</li><li><strong>Сохранения:</strong> папки игры, копирование перед запуском и восстановление с предпросмотром.</li><li><strong>Оформление:</strong> живой редактор палитры, скруглений и шрифта; интенсивность эффектов.</li></ul><h3>В версии 1.0.22</h3><ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
+  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.26',`<ul class="release-list"><li>Видеофоны MP4/WebM и галерея пользовательских тем без кода.</li><li>Импорт Epic, GOG и itch.io, перетаскивание EXE и LNK, подтверждение обложек и ярлыки профилей запуска.</li><li>Выбор файлов после получения метаданных торрента.</li><li>Проверка официальных сборок и SHA-256, резервная копия настроек, режим «Только локально».</li><li>Отдельные профили игроков, подбор игры по времени, настроению и режиму, планы вечеров с экспортом .ics.</li></ul>`);
   case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
   case 'theme-editor':return themeEditor();
   case 'theme-preview':return previewTheme(d.themeId);
@@ -822,6 +851,17 @@ api.onNoticeChanged?.(()=>{const button=$('#notice-shortcut');button.dataset.new
 api.onGoSection?.(section=>go(section));
 api.onAppearanceRuntime?.(value=>setRuntime(value));
 let pointer=0,pointerX=0,pointerY=0;
+document.addEventListener('visibilitychange',applyTheme);
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',applyTheme);
+let dropBusy=false;
+document.addEventListener('dragover',e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();if(state.section==='library'&&api.previewDropped)$('#library-drop')?.classList.add('is-over');}});
+document.addEventListener('dragleave',e=>{if(e.relatedTarget==null)$('#library-drop')?.classList.remove('is-over');});
+document.addEventListener('drop',e=>{
+ if(!e.dataTransfer?.types.includes('Files'))return;e.preventDefault();$('#library-drop')?.classList.remove('is-over');
+ if(dropBusy||!api.previewDropped||state.section!=='library'||dialog.open)return;
+ const files=[...e.dataTransfer.files].filter(f=>/\.(?:exe|lnk)$/i.test(f.name));if(!files.length||files.length>30){toast('Перетащи от 1 до 30 EXE или ярлыков .lnk.',true);return;}
+ const n=renderId;dropBusy=true;run(async()=>{try{const scan=await api.previewDropped(files);if(current(n)&&!dialog.open)gamesTools.showScan(scan,'drop');}finally{dropBusy=false;}});
+});
 document.addEventListener('pointermove',e=>{
  if(!state.settings.personal?.parallax||!motionAllowed()||e.pointerType!=='mouse')return;
  pointerX=(e.clientX/Math.max(1,innerWidth)-.5)*22;pointerY=(e.clientY/Math.max(1,innerHeight)-.5)*22;
@@ -834,7 +874,7 @@ setInterval(()=>{if(document.hidden)return;
 run(async()=>{try{
  state.settings=await api.settings();
  if(api.appearanceRuntime)appearanceRuntime=await api.appearanceRuntime();
- const [wallpaper,slides]=await Promise.all([readWallpaper().catch(()=>null),slideshowIO.read().catch(()=>[])]);
- setWallpaper(wallpaper);state.slides=slides;selectSlide(0);applyTheme();showIntro(cleanPersonal(state.settings.personal).intro);
+ const [wallpaper,slides,video]=await Promise.all([readWallpaper().catch(()=>null),slideshowIO.read().catch(()=>[]),backgroundVideo.read().catch(()=>null)]);
+ setWallpaper(wallpaper);state.slides=slides;selectSlide(0);setVideo(video);applyTheme();showIntro(cleanPersonal(state.settings.personal).intro);
  state.library=await api.library();
  }finally{const start=state.settings.startSection;if(start&&start!=='home'&&Object.hasOwn(sections,start))go(start);else{sidebar();await render();}}});

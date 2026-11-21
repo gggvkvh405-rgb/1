@@ -8,7 +8,7 @@ const stateFile=path.join(profile,'state.json');
 async function seed(){
   const exe=path.join(process.env.SystemRoot,'System32','PING.EXE');await fs.access(exe);
   await fs.mkdir(profile,{recursive:true});
-  await fs.writeFile(stateFile,JSON.stringify({settings:{startSection:'journal',theme:'scene-photo-snow'},library:[{id:'fixture',title:'CI session',exe,collections:[],profiles:[{name:'Fixture',args:['-n','3','127.0.0.1']}]}]}));
+  await fs.writeFile(stateFile,JSON.stringify({appVersion:'1.0.25',settings:{startSection:'journal',theme:'scene-photo-snow',localOnly:true},library:[{id:'fixture',title:'CI session',exe,collections:[],profiles:[{name:'Fixture',args:['-n','3','127.0.0.1']}]}]}));
 }
 async function smoke(){
   let target;
@@ -30,6 +30,15 @@ async function smoke(){
       for(let i=0;i<30&&!document.querySelector('#journal-goal');i++)await wait(100);
       if(!document.querySelector('#journal-goal')||typeof require!=='undefined')throw Error('UI or isolation check failed');
       const api=window.byazen,settings=await api.settings();
+      if(!settings.localOnly||!(await api.appearanceRuntime()).localOnly)throw Error('Local mode did not start');
+      for(const call of [()=>api.steam({}),()=>api.officialCheck(),()=>api.addDownload('https://example.com/fixture')]){
+        const blocked=await call().then(()=>false,e=>e.message.includes('локально'));if(!blocked)throw Error('A network action was not blocked');
+      }
+      const player=await api.createPlayer('CI second player');
+      const shortcuts=[];
+      try{
+        for(const i of [-1,0])shortcuts.push(await api.gameShortcut('fixture',i));
+      }catch(e){throw Error('Could not create Windows shortcut: '+e.message);}
       await api.saveSettings({...settings,personal:{...settings.personal,tray:true}});
       await api.saveSettings({...settings,personal:{...settings.personal,tray:false}});
       const before=await api.appearanceRuntime();if(before.safe||document.documentElement.dataset.theme!=='scene-photo-snow')throw Error('Unexpected initial appearance');
@@ -47,14 +56,21 @@ async function smoke(){
       for(let i=0;i<50;i++){
         const {sessions,goal}=await api.journal();
         const s=sessions.find(s=>s.gameId==='fixture'&&!s.manual);
-        if(s)return {wall:!!document.querySelector('#theme-wall'),seconds:s.seconds,goal};
+        if(s)return {wall:!!document.querySelector('#theme-wall'),seconds:s.seconds,goal,shortcuts,player};
         await wait(100);
       }
       throw Error('ByAzen did not track the Windows process');
     })()`);
     assert.equal(result.wall,true);assert.ok(result.seconds>=1);assert.equal(result.goal,3);
     const state=JSON.parse(await fs.readFile(stateFile,'utf8'));assert.equal(state.settings.personal.tray,false);assert.equal(state.library[0].lastProfile,JSON.stringify({name:'Fixture',args:['-n','3','127.0.0.1']}));assert.equal(state.journal.goal,3);
-    console.log('Windows portable renderer, isolated preload, tray, safe appearance, required files, storage and EXE session verified.');
+    const backups=await fs.readdir(path.join(profile,'update-backups'));
+    assert.equal(backups.length,1);const saved=JSON.parse(await fs.readFile(path.join(profile,'update-backups',backups[0]),'utf8'));
+    assert.equal(saved.from,'1.0.25');assert.equal(saved.to,require('../package.json').version);assert.equal(saved.settings.theme,'scene-photo-snow');
+    const other=JSON.parse(await fs.readFile(path.join(profile,'players',result.player.id,'state.json'),'utf8'));
+    assert.equal(other.settings.name,'CI second player');assert.ok(!other.library?.length);
+    assert.equal(state.shortcuts.length,2);assert.equal(state.shortcuts[0].signature,null);assert.equal(state.shortcuts[1].signature,state.library[0].lastProfile);
+    assert.equal(result.shortcuts.length,2);
+    console.log('Windows portable renderer, isolated preload, tray, safe appearance, required files, storage, local-only IPC, player data, pre-update backup, Windows shortcuts and EXE session verified.');
   }finally{socket.close();}
 }
 const watchdog=setTimeout(()=>{console.error('Windows smoke test timed out');process.exit(1);},30000);

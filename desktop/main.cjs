@@ -1,3 +1,7 @@
+const {discoverStore}=require('../core/store-import.cjs');
+const {officialUpdate,verifyPackage,backupSettings}=require('../core/official-build.cjs');
+const {rememberPlayer,profileId,playerArg,shortcutArg,readPlayers,startupPlayer,playerPath,createPlayer,shortcutProfile}=require('../core/player-profiles.cjs');
+const {cleanPlan,planICS}=require('../public/play-plans.js');
 const {maxMigration,migrationExport,readMigration,freshCards,adoptMigration,cleanRequired,verifyFiles,diskReport,previewCleanup,cleanup,collectionHTML}=require('../core/file-workbench.cjs');
 const {createSteamDetails,saveWish,wishMonitor}=require('../core/steam-detail.cjs');
 const {configure,createSourceWorkbench,sortedSources,matchesWithAliases,sourceExport}=require('../core/source-workbench.cjs');
@@ -8,7 +12,7 @@ const fs = require('node:fs/promises');
 const {randomUUID} = require('node:crypto');
 const {pathToFileURL} = require('node:url');
 const {parseSource, MAX_JSON, sourceLink} = require('../core/sources.cjs');
-const {searchSteam} = require('../core/steam.cjs');
+const {searchSteam,steamImage} = require('../core/steam.cjs');
 const {webURL} = require('../core/net.cjs');
 const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
@@ -18,7 +22,7 @@ const {updateBatch,prepareMove,applyMove,findScreenshots,readScreenshot}=require
 const {cleanDate,localDay}=require('../public/journal.js');
 const {checkDownload}=require('../core/download-check.cjs');
 const {SaveBackups}=require('../core/save-backups.cjs');
-const {discoverExecutables,discoverSteam,importSelected,steamId,directory,boundedText}=require('../core/installed-games.cjs');
+const {discoverExecutables,discoverSteam,importSelected,steamId,directory,boundedText,isExecutable}=require('../core/installed-games.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,readSourceGame} = require('../core/state.cjs');
 
 const {auditSources}=require('../core/source-audit.cjs');
@@ -30,16 +34,29 @@ const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
 protocol.registerSchemesAsPrivileged([{scheme:'byazen', privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 if (process.env.PORTABLE_EXECUTABLE_DIR) app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR,'ByAzen-data'));
+const baseProfile=app.getPath('userData');
+let activePlayer='default';
+const launcherExe=()=>process.env.PORTABLE_EXECUTABLE_FILE||process.execPath;
+function relaunchPlayer(id,shortcut=''){
+  rememberPlayer(baseProfile,id);
+  const extra=[`--byazen-player=${id}`,...(shortcut?[`--byazen-shortcut=${shortcut}`]:[])];
+  const dev=!app.isPackaged?[path.resolve(__dirname,'..')]:[];
+  app.relaunch({execPath:launcherExe(),args:[...dev,...extra]});app.quit();
+}
+const onlineActions=new Set(['steam','steamDetail','steamWishSave','steamWishRefresh','openSteamCharts','openProjectFeedback','auditSources','retrySourceLists','connectOnlineFix','previewURL','sourceBulkPreview','openSource','checkDownload','addDownload','officialCheck','coverCandidates','statusCheck','openOfficialRelease']);
 
 async function bootstrap() {
   const file = path.join(app.getPath('userData'),'state.json');
-  const data = readState(file);
+  let oldSettings;const data = readState(file,{capture:value=>{oldSettings=value;}});
   await fs.mkdir(path.dirname(file),{recursive:true});
+  const version=app.getVersion(),needsVersion=data.appVersion!==version,localOnly=data.settings.localOnly===true;
+  if(needsVersion&&oldSettings){await backupSettings(path.dirname(file),oldSettings,/^\d+\.\d+\.\d+$/.test(data.appVersion)?data.appVersion:'1.0.25',version);}
+  data.appVersion=version;
   const copies=new SaveBackups(path.dirname(file));
   let storageHealth={status:'ok',at:new Date().toISOString()},steamHealth={status:'unknown',at:''},safeAppearance=process.argv.includes('--safe-mode');
   const playing=new Set();let battery=false;
   try{battery=powerMonitor.isOnBatteryPower();}catch{}
-  const runtime=()=>({safe:safeAppearance,battery,playing:playing.size>0});
+  const runtime=()=>({safe:safeAppearance,battery,playing:playing.size>0,hidden:!!window&&(window.isMinimized()||!window.isVisible()),localOnly});
   function sendRuntime(){if(window&&!window.isDestroyed())window.webContents.send('appearance-runtime',runtime());}
   powerMonitor.on('on-battery',()=>{battery=true;sendRuntime();});
   powerMonitor.on('on-ac',()=>{battery=false;sendRuntime();});
@@ -56,7 +73,8 @@ async function bootstrap() {
     if(window&&!window.isDestroyed())window.webContents.send('notice-changed');
   }
   const persist = () => {try { collectNotifications();sourceWorkbench.observe();saveState(file,data);storageHealth={status:'ok',at:new Date().toISOString()}; } catch (e) { storageHealth={status:'error',at:new Date().toISOString()};console.error('State:',e.message); if(window&&!window.isDestroyed())window.webContents.send('storage-error',e.message); }};
-  let window,tray;
+  let window,tray,playerBusy=false,shortcutBusy=false;
+  const updatePlans=new Map(),coverPlans=new Map();
   const sourceWorkbench=createSourceWorkbench(data,pushNotice);
   const steamDetails=createSteamDetails(),steamWatch=wishMonitor(data.steamDesk,steamDetails,persist,pushNotice);
   const bulkPlans=new Map(),migrationPlans=new Map(),cleanupPlans=new Map();let bulkBusy=false,cleanupBusy=false,reportBusy=false;
@@ -83,7 +101,7 @@ async function bootstrap() {
     ]);
     tray.setContextMenu(menu());tray.on('right-click',()=>{tray.setContextMenu(menu());});
   }
-  app.on('second-instance',()=>showApp());
+  app.on('second-instance',(_event,argv)=>{showApp();void handleShortcut(argv).catch(e=>dialog.showErrorBox('ByAzen',e.message));});
   app.once('before-quit',()=>{tray?.destroy();tray=null;});
   const previews = new Map(),exeTokens = new Map(),installPlans=new Map(),restorePlans=new Map(), movePlans=new Map(), screenshotPlans=new Map();
   const folderKinds=new Set(['saves','screenshots','mods']);
@@ -105,14 +123,16 @@ async function bootstrap() {
   function savesOf(g){const root=folderOf(g,'saves');if(!root)throw Error('Сначала выберите папку сохранений.');return root;}
   async function scanLibrary(kind){
     if(scanning)throw Error('Поиск уже выполняется.');
-    if(!['local','steam'].includes(kind))throw Error('Неизвестный режим импорта.');
+    if(!['local','steam','epic','gog','itch'].includes(kind))throw Error('Неизвестный режим импорта.');
     scanning=true;
     try{
       const steam=kind==='steam',programFiles=process.env['ProgramFiles(x86)']||process.env.ProgramFiles;
       const folder=await pickFolder(steam?'Выберите папку библиотеки Steam или steamapps':'Выберите папку с установленными играми',steam&&programFiles?path.join(programFiles,'Steam'):undefined);
       if(!folder)return null;
-      const {found,limited}=await (steam?discoverSteam(folder):discoverExecutables(folder));
-      return {id:token(installPlans,found),limited,items:found.map((r,i)=>({index:i,title:r.title,path:r.file,steamAppId:r.steamAppId||'',
+      let meta;
+      if(kind==='epic'){meta=await pickFolder('Выберите папку манифестов Epic Games Launcher',process.env.ProgramData?path.join(process.env.ProgramData,'Epic','EpicGamesLauncher','Data','Manifests'):undefined);if(!meta)return null;}
+      const {found,limited}=await (steam?discoverSteam(folder):kind==='local'?discoverExecutables(folder):discoverStore(kind,folder,meta));
+      return {id:token(installPlans,found),limited,items:found.map((r,i)=>({index:i,title:r.title,path:r.file,store:r.store||'',steamAppId:r.steamAppId||'',
         present:data.library.some(g=>r.steamAppId?g.steamAppId===r.steamAppId:g.exe?.toLowerCase()===r.file.toLowerCase())}))};
     }finally{scanning=false;}
   }
@@ -143,10 +163,50 @@ async function bootstrap() {
   }
   let auditTask;
   const presetSync=createPresetSync(data.sources,readSource,persist,{concurrency:3});
-  if(installPresets(data))persist();
+  if(installPresets(data)||needsVersion)persist();
   const actions = {
     settings: () => data.settings,
-    saveSettings: (x) => { data.settings = updateSettings(x); persist();syncTray();return data.settings; },
+    saveSettings: x => {data.settings=updateSettings({...x,localOnly});persist();syncTray();return data.settings;},
+    localOnly: enabled=>{
+      if(typeof enabled!=='boolean'||enabled===localOnly)return false;
+      if(playing.size)throw Error('Сначала завершите игры, запущенные из ByAzen.');
+      data.settings.localOnly=enabled;
+      try{saveState(file,data);}catch(e){data.settings.localOnly=localOnly;throw e;}relaunchPlayer(activePlayer);return true;
+    },
+    players: async()=>({active:activePlayer,rows:[{id:'default',name:'Основной профиль'},...await readPlayers(baseProfile)]}),
+    createPlayer: async name=>{
+      if(playerBusy)throw Error('Подождите окончания операции.');playerBusy=true;
+      try{const row=await createPlayer(baseProfile,name),dir=await playerPath(baseProfile,row.id);
+        saveState(path.join(dir,'state.json'),{appVersion:version,settings:{name:row.name,localOnly}});return row;
+      }finally{playerBusy=false;}
+    },
+    switchPlayer: async id=>{
+      if(!profileId(id)||id===activePlayer)return false;
+      if(playing.size)throw Error('Сначала завершите игры, запущенные из ByAzen.');
+      if(id!=='default'&&!(await readPlayers(baseProfile)).some(r=>r.id===id))throw Error('Игрок не найден.');
+      await playerPath(baseProfile,id);relaunchPlayer(id);return true;
+    },
+    officialCheck: async()=>{const info=await officialUpdate(version);return {id:token(updatePlans,info),...info};},
+    officialVerify: async id=>{
+      const info=updatePlans.get(id);if(!info)throw Error('Проверьте версию снова.');
+      const {filePaths:[exe]}=await dialog.showOpenDialog(window,{title:'Выберите скачанный официальный EXE',properties:['openFile'],filters:[{name:'Portable EXE',extensions:['exe']}]});return exe?await verifyPackage(exe,info):null;
+    },
+    openOfficialRelease: async id=>{
+      const info=updatePlans.get(id);if(!info)throw Error('Проверьте версию снова.');
+      const backup=await backupSettings(path.dirname(file),data.settings,version,info.version);
+      await shell.openExternal(info.page);return {backup};
+    },
+    playersPlans: ()=>data.plans,
+    savePlayerPlan: (id,value)=>{
+      const row={...cleanPlan(value),id:id||randomUUID()};
+      if(id){const i=data.plans.findIndex(p=>p.id===id);if(i<0)throw Error('План не найден.');data.plans[i]=row;}
+      else{if(data.plans.length>=100)throw Error('Лимит — 100 планов.');data.plans.push(row);}persist();return data.plans;
+    },
+    removePlayerPlan: id=>{data.plans=data.plans.filter(p=>p.id!==id);persist();},
+    exportPlayerPlan: async id=>{
+      const plan=find(data.plans,id),{filePath}=await dialog.showSaveDialog(window,{defaultPath:'ByAzen-evening.ics',filters:[{name:'Календарь',extensions:['ics']}]});
+      if(!filePath)return false;await fs.writeFile(filePath,planICS(plan),'utf8');return true;
+    },
     steam: filters=>observeSteam(()=>searchSteam(filters)),
     steamDetail: (id,cc)=>observeSteam(()=>steamDetails(id,cc)),
     appearanceRuntime: ()=>runtime(),
@@ -195,10 +255,11 @@ async function bootstrap() {
     },
     sourceAction: async (id,op) => {
       const src = find(data.sources,id);
+      if(localOnly&&op==='refresh'&&src.kind==='url')throw Error('Лаунчер работает только локально.');
       if (op === 'remove') data.sources.splice(data.sources.indexOf(src),1);
       else if (op === 'toggle') {
         src.enabled = !src.enabled;sourceWorkbench.observe(true);
-        if(src.enabled&&managedURL(src)&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
+        if(!localOnly&&src.enabled&&managedURL(src)&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
       }
       else if(op==='refresh'&&src.kind==='url')return presetSync.refresh(src);
       else if(op==='refresh'){
@@ -264,8 +325,8 @@ async function bootstrap() {
       if (!src.enabled || !Number.isInteger(index) || !Number.isInteger(linkIndex)) throw Error('Ссылка недоступна.');
       const url = sourceLink(src.games[index]?.links[linkIndex]);
       if (url !== expected) throw Error('Источник изменился. Откройте ссылку повторно.');
-      if (action !== 'download') throw Error('Неподдерживаемое действие.');
-      return addDownload(url,src.games[index].title,src.name);
+      if (!['download','select-download'].includes(action)) throw Error('Неподдерживаемое действие.');
+      return addDownload(url,src.games[index].title,src.name,undefined,action==='select-download');
     },
     library: () => data.library,
     diskReport: async()=>{
@@ -293,7 +354,7 @@ async function bootstrap() {
     },
     migrationApply: (id,flags)=>withMaintenance(()=>{
       const pack=migrationPlans.get(id);if(!pack)throw Error('Откройте новый предпросмотр.');
-      const result=adoptMigration(data,pack,flags?.games,flags?.settings);migrationPlans.delete(id);persist();syncTray();return result;
+      const result=adoptMigration(data,pack,flags?.games,flags?.settings);migrationPlans.delete(id);data.settings.localOnly=localOnly;persist();syncTray();return result;
     }),
     requiredFiles: id=>game(id).requiredFiles||[],
     checkRequired: id=>verifyFiles(game(id)),
@@ -393,6 +454,45 @@ async function bootstrap() {
       restorePlans.delete(draft);return copies.restore(game(id).id,savesOf(game(id)),pending.preview);
     }),
     deleteSaveBackup: (id,backup) => withMaintenance(()=>copies.remove(game(id).id,backup)),
+    previewDrop: async paths=>{
+      if(!Array.isArray(paths)||!paths.length||paths.length>30)throw Error('Перетащите до 30 локальных EXE или ярлыков.');
+      const found=[],seen=new Set();
+      for(const p of paths){try{
+        if(typeof p!=='string'||!/^([a-z]):\\/i.test(p)||p.length>1000||!(/\.(?:exe|lnk)$/i.test(p)))continue;
+        const item=await fs.lstat(p);if(!item.isFile()||item.isSymbolicLink())continue;
+        let file=await fs.realpath(p);if(!/^[a-z]:\\/i.test(file))continue;
+        if(/\.lnk$/i.test(file))file=shell.readShortcutLink(file).target;
+        await prepareLaunch(file);file=await fs.realpath(file);await prepareLaunch(file);
+        const folder=await directory(path.dirname(file));if(!await isExecutable(folder,file)||seen.has(file.toLowerCase()))continue;
+        seen.add(file.toLowerCase());found.push({title:path.basename(file,path.extname(file)).slice(0,160),file,root:folder});
+      }catch{}}
+      return {id:token(installPlans,found),items:found.map((r,index)=>({index,title:r.title,path:r.file,present:data.library.some(g=>g.exe?.toLowerCase()===r.file.toLowerCase())}))};
+    },
+    coverCandidates: async id=>{
+      const g=game(id),matches=g.steamAppId?[{id:g.steamAppId,...await observeSteam(()=>steamDetails(g.steamAppId,data.settings.region))}]:await observeSteam(()=>searchSteam({term:g.title,category1:'998',page:1,cc:data.settings.region})).then(r=>r.games);
+      const rows=matches.flatMap(row=>{const image=steamImage(row.image);return image?[{title:row.name||row.title,image,year:row.year||null}]:[];}).slice(0,8);
+      return {draft:token(coverPlans,{id,rows}),rows};
+    },
+    applyCover: (id,draft,index)=>withMaintenance(()=>{
+      const plan=coverPlans.get(draft);if(!plan||plan.id!==id||!Number.isInteger(index)||!plan.rows[index])throw Error('Откройте новый предпросмотр обложек.');
+      game(id).steamCover=plan.rows[index].image;coverPlans.delete(draft);persist();
+    }),
+    clearCover: id=>{delete game(id).steamCover;persist();},
+    gameShortcut: (id,profile)=>withMaintenance(async()=>{
+      const g=game(id),steam=steamId(g.steamAppId);
+      if(!Number.isInteger(profile)||profile<-1||(steam?profile!==-1:profile>=g.profiles.length))throw Error('Профиль запуска не найден.');
+      if(!steam)await prepareLaunch(g.exe,g.profiles[profile]?.args||[]);
+      const executable=launcherExe();await prepareLaunch(executable);
+      const token=randomUUID(),desktop=await directory(app.getPath('desktop'));
+      const name=`ByAzen - ${g.title.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').trim().slice(0,65)} (${token.slice(0,8)}).lnk`,out=path.join(desktop,name);
+      if(await fs.lstat(out).then(()=>true,e=>{if(e.code==='ENOENT')return false;throw e;}))throw Error('Ярлык уже существует.');
+      if(data.shortcuts.length>=200)throw Error('Достигнут лимит ярлыков (200).');
+      const args=[...(app.isPackaged?[]:[`"${path.resolve(__dirname,'..')}"`]),`--byazen-player=${activePlayer}`,`--byazen-shortcut=${token}`].join(' ');
+      if(!shell.writeShortcutLink(out,'create',{target:executable,cwd:path.dirname(executable),args,description:'ByAzen — запуск выбранной игры'}))throw Error('Не удалось создать ярлык Windows.');
+      data.shortcuts.push({token,game:id,signature:profile<0?null:JSON.stringify(g.profiles[profile])});
+      try{saveState(file,data);}catch(e){data.shortcuts.pop();await fs.unlink(out).catch(()=>{});throw e;}
+      return name;
+    }),
     chooseExe: async () => {
       const {filePaths:[exe]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Windows',extensions:['exe']}]});
       if (!exe) return null;
@@ -414,6 +514,7 @@ async function bootstrap() {
       if(!steam&&!g.exe)throw Error('Сначала выберите файл .exe в карточке игры.');
       if(!Number.isInteger(profile)||profile < -1||(steam?profile!==-1:profile>=g.profiles.length))throw Error('Профиль не найден.');
       const args=g.profiles[profile]?.args||[];
+      if(steam&&localOnly)throw Error('Запуск через Steam недоступен в локальном режиме.');
       if(!steam)await prepareLaunch(g.exe,args);
       if(g.autoSaveBackup===true)await copies.make(g.id,savesOf(g),{automatic:true});
       if(steam)await shell.openExternal(`steam://rungameid/${g.steamAppId}`);
@@ -450,45 +551,68 @@ async function bootstrap() {
       if(!(await fs.lstat(parent).catch(()=>null))?.isDirectory())throw Error('Папка назначения не найдена.');
       if(await shell.openPath(parent))throw Error('Windows не открыла папку назначения.');
     },
-    addDownload: (raw,sha256) => addDownload(sourceLink(raw),'','',cleanHash(sha256)),
-    downloadAction: (id,op) => {if(cleanupBusy&&['resume','remove','cancel'].includes(op))throw Error('Дождитесь завершения очистки.');return queue.action(id,op);}
+    addDownload: (raw,sha256,select) => addDownload(sourceLink(raw),'','',cleanHash(sha256),select===true),
+    torrentFiles: (id,page)=>queue.torrentFiles(id,page),
+    setTorrentFiles: (id,indices)=>queue.setTorrentFiles(id,indices),
+    downloadAction: (id,op) => {if(localOnly&&op==='resume')throw Error('Загрузки отключены в локальном режиме.');if(cleanupBusy&&['resume','remove','cancel'].includes(op))throw Error('Дождитесь завершения очистки.');return queue.action(id,op);}
   };
-  async function addDownload(url,title,source,sha256){
+  async function addDownload(url,title,source,sha256,select=false){
     if(url.startsWith('magnet:')){
       if(sha256)throw Error('Для magnet используется встроенная проверка частей. Поле SHA-256 предназначено для HTTP(S)-файла.');
       const {xt}=magnetV1(url);
       const label=title||new URL(url).searchParams.get('dn')||`Torrent ${xt.slice(9,17)}`;
       const {filePaths:[folder]}=await dialog.showOpenDialog(window,{title:'Выберите папку для загрузки BitTorrent',defaultPath:app.getPath('downloads'),properties:['openDirectory','createDirectory']});
       if(!folder)return false;
-      queue.addTorrent(url,folder,label,source);return true;
+      queue.addTorrent(url,folder,label,source,select);return true;
     }
+    if(select)throw Error('Выбор отдельных файлов доступен только для magnet.');
     const {filePath}=await dialog.showSaveDialog(window,{defaultPath:path.join(app.getPath('downloads'),nameFromURL(url))});
     if(filePath){queue.add(url,filePath,{expectFile:Boolean(title),origin:source,sha256});return true;}return false;
   }
   function stash(parsed,metadata) { const id = token(previews,{...parsed,...metadata}); return {id,name:parsed.name,count:parsed.games.length,skipped:parsed.skipped,ignoredLinks:parsed.ignoredLinks,titles:parsed.games.slice(0,10).map(g=>g.title)}; }
-  protocol.handle('byazen', req => {
+  async function handleShortcut(argv){
+    const key=shortcutArg(argv),player=playerArg(argv);if(!key||shortcutBusy)return;
+    shortcutBusy=true;
+    try{
+      if(player!==activePlayer){
+        const result=await dialog.showMessageBox(window,{type:'question',buttons:['Отмена','Сменить профиль'],defaultId:0,cancelId:0,message:'Ярлык относится к другому игроку ByAzen.'});
+        if(result.response===1){if(playing.size)throw Error('Сначала завершите запущенные игры.');await playerPath(baseProfile,player);relaunchPlayer(player,key);}return;
+      }
+      const record=data.shortcuts.find(s=>s.token===key),g=record&&data.library.find(g=>g.id===record.game),profile=shortcutProfile(g,record);
+      if(profile===null)throw Error('Игра или профиль изменились. Создайте новый ярлык.');
+      const name=profile<0?'Без аргументов':g.profiles[profile].name;
+      const result=await dialog.showMessageBox(window,{type:'question',buttons:['Отмена','Запустить'],defaultId:0,cancelId:0,message:g.title,detail:`Профиль запуска: ${name}`});
+      if(result.response===1)await actions.launchGame(g.id,profile);
+    }finally{shortcutBusy=false;}
+  }
+  protocol.handle('byazen' , req => {
     const u = new URL(req.url);
     const name = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname.slice(1));
     const file = path.resolve(root,name);
     if (u.host !== 'app' || !file.startsWith(root+path.sep)) return new Response('Not found',{status:404});
     return net.fetch(pathToFileURL(file).href);
   });
+  if(localOnly)session.defaultSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*','ws://*/*','wss://*/*','ftp://*/*']},(_details,respond)=>respond({cancel:true}));
   session.defaultSession.setPermissionRequestHandler((wc, p, cb) => cb(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.on('will-download', (_, item) => item.cancel());
   ipcMain.handle('byazen', async (event,action,args) => {
     const sender = event.senderFrame;
     if (!window || event.sender !== window.webContents || sender !== event.sender.mainFrame || !sender.url.startsWith(origin+'/') || !Object.hasOwn(actions,action) || !Array.isArray(args) || args.length > 5) return {error:'Действие запрещено.'};
+    if(localOnly&&onlineActions.has(action))return {error:'Лаунчер работает только локально. Сетевые операции отключены.'};
     try { return {value:await actions[action](...args)}; }
     catch (e) { return {error:e.message || 'Не удалось выполнить действие.'}; }
   });
   window = new BrowserWindow({width:1440,height:900,minWidth:720,minHeight:480,show:false,backgroundColor:'#101010',title:'ByAzen',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});
   syncTray();
-  window.on('minimize',()=>{if(tray)window.hide();});
+  window.on('minimize',()=>{if(tray)window.hide();sendRuntime();});
+  for(const event of ['restore','hide','show'])window.on(event,sendRuntime);
   window.webContents.setWindowOpenHandler(() => ({action:'deny'}));
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});
   await window.loadURL(origin+'/');
+  if(shortcutArg(process.argv))void handleShortcut(process.argv).catch(e=>dialog.showErrorBox('ByAzen',e.message));
+  if(localOnly)return;
   const schedule=setInterval(()=>void presetSync.scheduled(),60000);schedule.unref();
   const priceSchedule=setInterval(()=>void steamWatch(),120000);priceSchedule.unref();
   app.once('before-quit',()=>{clearInterval(schedule);clearInterval(priceSchedule);});
@@ -496,6 +620,8 @@ async function bootstrap() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.whenReady().then(bootstrap).catch(e => {dialog.showErrorBox('ByAzen',e.message); app.quit();});
+  let startupError;
+  try{const profile=startupPlayer(baseProfile,process.argv);activePlayer=profile.id;app.setPath('userData',profile.path);app.setPath('sessionData',profile.path);}catch(e){startupError=e;}
+  app.whenReady().then(()=>{if(startupError)throw startupError;return bootstrap();}).catch(e => {dialog.showErrorBox('ByAzen',e.message); app.quit();});
   app.on('window-all-closed',()=>app.quit());
 }

@@ -24,7 +24,7 @@ function nameFromURL(raw) {
   base = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^[ .]+|[ .]+$/g,'').slice(0,160);
   return !base || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(base) ? 'download' : base;
 }
-const reportPhases=new Set(['connecting','metadata','waiting-metadata','pieces','transfer','verifying','saving']);
+const reportPhases=new Set(['connecting','metadata','waiting-metadata','selecting-files','pieces','transfer','verifying','saving']);
 const reportStatuses=new Set(['queued','running','paused','pausing','scheduling','canceling','canceled','removing','error','done']);
 const interrupted=new Set(['queued','running','pausing','canceling','removing','scheduling']);
 const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
@@ -50,7 +50,7 @@ class DownloadQueue {
     const queued=this.waiting(), positions=new Map(queued.map((j,i)=>[j,i+1]));
     const sorted=[...this.items.filter(j=>this.active.has(j)),...queued,...this.items.filter(j=>!this.active.has(j)&&!positions.has(j))];
     return sorted.map(j=>{
-      const {url,partial,validator,expectedSha256,...shown}=j, active=this.active.get(j);
+      const {url,partial,validator,expectedSha256,selection,...shown}=j, active=this.active.get(j);
       const moving=active&&j.status==='running'&&!['saving','verifying'].includes(j.phase);
       return {...shown,position:positions.get(j)||null,telemetry:moving?active.meter.read(j.bytes||0,j.total,this.clock()):null,
         diagnostic:j.kind==='torrent'?summary(active?.stats||j.diagnostic):null};
@@ -69,14 +69,14 @@ class DownloadQueue {
     this.items.unshift({id,url,file,title:path.basename(file),origin:originName(origin),partial:path.join(path.dirname(file),`.byazen-${id}.part`),status:'queued',bytes:0,total:null,validator:'',error:'',expectedSha256,expectFile:expectFile===true});
     this.persist();this.pump();
   }
-  addTorrent(url,parent,label,origin){
+  addTorrent(url,parent,label,origin,pickFiles=false){
     magnetV1(url);
     if(this.items.length>=200)throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
     const id=randomUUID();
     let title=String(label||'Torrent').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').trim().replace(/[. ]+$/,'').slice(0,90)||'Torrent';
     if(/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(title))title='Torrent '+title;
     const folder=path.join(parent,`${title} (${id.slice(0,8)})`);
-    this.items.unshift({id,url,file:folder,title,origin:originName(origin),kind:'torrent',partial:path.join(parent,`.byazen-${id}.part`),status:'queued',bytes:0,total:null,error:''});
+    this.items.unshift({id,url,file:folder,title,origin:originName(origin),kind:'torrent',pickFiles:pickFiles===true,partial:path.join(parent,`.byazen-${id}.part`),status:'queued',bytes:0,total:null,error:''});
     this.persist();this.pump();
   }
   clearPartial(job){return fsp.rm(job.partial,{force:true,recursive:job.kind==='torrent'});}
@@ -113,11 +113,31 @@ class DownloadQueue {
       const j=this.waiting()[0];if(!j)break;this.start(j);
     }
   }
+  torrentFiles(id,page){
+    const j=this.find(id),plan=this.active.get(j)?.pick;
+    if(j.phase!=='selecting-files'||j.status!=='running'||!plan)throw Error('Список файлов пока недоступен или уже подтверждён.');
+    const size=60,total=plan.rows.length,max=Math.max(1,Math.ceil(total/size));
+    const p=Number.isInteger(page)?Math.max(1,Math.min(page,max)):1;
+    return {id,page:p,max,total,rows:plan.rows.slice((p-1)*size,p*size).map((r,i)=>({...r,index:(p-1)*size+i}))};
+  }
+  setTorrentFiles(id,indices){
+    const j=this.find(id),active=this.active.get(j),pick=active?.pick;
+    if(!pick||j.phase!=='selecting-files'||j.status!=='running')throw Error('Запросите список файлов снова.');
+    if(indices===null)indices=pick.rows.map((_,i)=>i);
+    if(!Array.isArray(indices)||!indices.length||indices.length>pick.rows.length||indices.some(i=>!Number.isInteger(i)||i<0||i>=pick.rows.length))throw Error('Отметьте хотя бы один файл.');
+    active.pick=null;pick.accept([...new Set(indices)].sort((a,b)=>a-b));
+  }
   start(j){
     const controller=new AbortController(),stats={},opts=this.options;
-    this.active.set(j,{controller,stats,meter:new TransferMeter(j.bytes||0,this.clock())});
+    const row={controller,stats,meter:new TransferMeter(j.bytes||0,this.clock())};this.active.set(j,row);
+    const chooseFiles=files=>new Promise((resolve,reject)=>{
+      const abort=()=>{row.pick=null;reject(controller.signal.reason);};
+      if(controller.signal.aborted){abort();return;}
+      controller.signal.addEventListener('abort',abort,{once:true});
+      row.pick={rows:files,accept:indices=>{controller.signal.removeEventListener('abort',abort);resolve(indices);}};
+    });
     j.status='running';j.priority=0;j.phase='connecting';j.verified=false;this.persist();
-    Promise.resolve().then(()=>j.kind==='torrent'?this.torrent(j,controller.signal,this.persist,{stats,receiveLimit:opts.receiveKiB*1024,sendLimit:opts.sendKiB*1024,checkSpace:this.space}):this.run(j,controller.signal,opts))
+    Promise.resolve().then(()=>j.kind==='torrent'?this.torrent(j,controller.signal,this.persist,{stats,receiveLimit:opts.receiveKiB*1024,sendLimit:opts.sendKiB*1024,checkSpace:this.space,chooseFiles}):this.run(j,controller.signal,opts))
       .then(()=>{j.status='done';j.completedAt=this.now().toISOString();},async err=>{
         if(j.status==='canceling'){await this.clearPartial(j);Object.assign(j,{status:'canceled',bytes:0,error:'',errorCode:'',completedAt:this.now().toISOString()});}
         else if(j.status==='pausing')j.status='paused';

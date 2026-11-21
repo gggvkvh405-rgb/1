@@ -124,4 +124,4 @@ async function importSelected(library,candidates,indices,{max=1500}={}){
  if(library.length+pending.length>max)throw Error('Недостаточно мест в библиотеке (лимит 1500 игр).');
  library.push(...pending);return {added:pending.length,skipped};
 }
-module.exports={key,samePath,segment,under,directory,withinDirectory,regular,boundedText,steamId,parseVDF,discoverExecutables,discoverSteam,importSelected};
+module.exports={key,samePath,segment,under,directory,withinDirectory,regular,boundedText,steamId,isExecutable,parseVDF,discoverExecutables,discoverSteam,importSelected};

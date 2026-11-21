@@ -75,3 +75,26 @@ jobs:
           path: release/ByAzen-*-win-x64-portable.exe
           if-no-files-found: error
           compression-level: 0
+
+  publish:
+    if: github.event_name == 'push' && github.repository == 'gggvkvh405-rgb/1' && startsWith(github.ref, 'refs/heads/arena/') && contains(github.event.head_commit.message, '[publish byazen]')
+    needs: portable
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ByAzen-win-x64-portable
+          path: portable-release
+      - name: Publish the verified portable executable and its SHA-256
+        working-directory: portable-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(ByAzen-*-win-x64-portable.exe)
+          [[ ${#files[@]} == 1 && ${files[0]} =~ ^ByAzen-([0-9]+\.[0-9]+\.[0-9]+)-win-x64-portable\.exe$ ]]
+          version=${BASH_REMATCH[1]}
+          sha256sum "${files[0]}" > "${files[0]}.sha256"
+          gh release create "v$version" "${files[0]}" "${files[0]}.sha256" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ByAzen $version" --notes "Verified Windows x64 portable build and SHA-256. Extract or save the executable beside your existing ByAzen-data folder. The executable is unsigned."
