@@ -13,7 +13,8 @@ const {readState,saveState,sourcesSummary,searchSources,availability,updateSetti
 
 const {auditSources}=require('../core/source-audit.cjs');
 const {createFeedReader}=require('../core/feed-reader.cjs');
-const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,presetLimits}=require('../core/presets.cjs');
+const {commitReplacement}=require('../core/source-replacement.cjs');
+const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,presetLimits,managedURL}=require('../core/presets.cjs');
 
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
@@ -30,19 +31,26 @@ async function bootstrap() {
   function token(map,value) { const id = randomUUID(); map.set(id,value); if (map.size > 6) map.delete(map.keys().next().value); return id; }
   const find = (list,id) => { const value = list.find(x => x.id === id); if (!value) throw Error('Запись не найдена.'); return value; };
   const readSource=createFeedReader();
-  async function readSourceFile(file){
+  function limitsForSource(source){
+    const profile=source?.presetURL||(source?.presetName?source.url:null);
+    return profile?presetLimits(profile):{maxBytes:MAX_JSON};
+  }
+  async function readSourceFile(file,limits={maxBytes:MAX_JSON}){
     const fd=await fs.open(file,'r');
     try{
       const stat=await fd.stat();
-      if(!stat.isFile()||stat.size>MAX_JSON)throw Error('Требуется JSON до 4 МБ.');
-      const buf=Buffer.alloc(MAX_JSON+1);
-      const {bytesRead}=await fd.read(buf,0,buf.length,0);
-      return parseSource(buf.subarray(0,bytesRead).toString('utf8'));
+      if(!stat.isFile()||stat.size>limits.maxBytes)throw Error(`Требуется JSON до ${limits.maxBytes/1048576} МБ.`);
+      const buf=Buffer.alloc(stat.size+1);
+      let bytes=0;
+      while(bytes<buf.length){const {bytesRead}=await fd.read(buf,bytes,buf.length-bytes,bytes);if(!bytesRead)break;bytes+=bytesRead;}
+      if(bytes!==stat.size)throw Error('Файл изменился во время чтения. Выберите его повторно.');
+      return parseSource(buf.subarray(0,bytes).toString('utf8'),limits);
     }finally{await fd.close();}
   }
   function readConnectedSource(source){
-    if(source.kind==='file')return readSourceFile(source.file);
-    if(source.kind==='url')return readSource(source.url,source.presetName?presetLimits(source.url):undefined);
+    const limits=limitsForSource(source);
+    if(source.kind==='file')return readSourceFile(source.file,limits);
+    if(source.kind==='url')return readSource(source.url,limits);
     throw Error('Неизвестный вид источника.');
   }
   let auditTask;
@@ -57,17 +65,23 @@ async function bootstrap() {
     sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
     retrySourceLists: () => presetSync.retryFailed(),
     auditSources: () => auditTask||=(auditSources(data.sources,readConnectedSource).finally(()=>{auditTask=null;})),
-    previewFile: async () => {
+    previewFile: async (id) => {
+      const replacementFor=id?find(data.sources,id):undefined;
       const {filePaths:[file]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Hydra JSON',extensions:['json']}]});
       if (!file) return null;
-      return stash(await readSourceFile(file),{kind:'file',file});
+      return stash(await readSourceFile(file,limitsForSource(replacementFor)),{kind:'file',file,replacementFor});
     },
-    previewURL: async raw => {const url = webURL(raw).href; return stash(await readSource(url),{kind:'url',url});},
+    previewURL: async (raw,id) => {
+      const url=webURL(raw).href,replacementFor=id?find(data.sources,id):undefined;
+      return stash(await readSource(url,limitsForSource(replacementFor)),{kind:'url',url,replacementFor});
+    },
+    replaceSource: (sourceId,id) => {commitReplacement(data.sources,sourceId,previews.get(id));previews.delete(id);persist();},
     importSource: id => {
       if (!previews.has(id)) throw Error('Откройте предпросмотр повторно.');
       const draft=previews.get(id);
+      if(draft.replacementFor)throw Error('Этот предпросмотр предназначен для замены списка.');
       if(draft.kind==='url'&&data.sources.some(s=>s.kind==='url'&&urlKey(s.url)===urlKey(draft.url)))throw Error('Источник с такой ссылкой уже добавлен.');
-      if (data.sources.filter(s=>!s.presetName).length >= CUSTOM_SOURCE_LIMIT) throw Error('Можно добавить до 20 своих источников.');
+      if (data.sources.filter(s=>!s.presetName&&!s.presetURL).length >= CUSTOM_SOURCE_LIMIT) throw Error('Можно добавить до 20 своих источников.');
       data.sources.push({...draft,id:randomUUID(),enabled:true,updated:new Date().toISOString()}); previews.delete(id); persist();
     },
     sourceAction: async (id,op) => {
@@ -75,9 +89,9 @@ async function bootstrap() {
       if (op === 'remove') data.sources.splice(data.sources.indexOf(src),1);
       else if (op === 'toggle') {
         src.enabled = !src.enabled;
-        if(src.enabled&&src.presetName&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
+        if(src.enabled&&managedURL(src)&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
       }
-      else if(op==='refresh'&&src.presetName)return presetSync.refresh(src);
+      else if(op==='refresh'&&managedURL(src))return presetSync.refresh(src);
       else if(op==='refresh'){
         const parsed=await readConnectedSource(src);if(!data.sources.includes(src))return;
         Object.assign(src,parsed,{updated:new Date().toISOString()});
@@ -154,7 +168,7 @@ async function bootstrap() {
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});
   await window.loadURL(origin+'/');
-  void presetSync.startup();
+  void presetSync.startup().then(()=>{const retry=setTimeout(()=>void presetSync.retryTransient(),60000);retry.unref();});
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {

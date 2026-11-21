@@ -1,5 +1,6 @@
 // User-selected Hydra feeds, not endorsements or verified download links.
 const {webURL} = require('./net.cjs');
+const {retryable}=require('./feed-reader.cjs');
 const REVISION = 1;
 const CUSTOM_SOURCE_LIMIT = 20;
 const PRESET_LIMITS = {maxBytes:24 * 1024 * 1024,maxEntries:50000};
@@ -44,23 +45,24 @@ function installPresets(data) {
   data.sourcePresetRevision=REVISION;
   return true;
 }
+const managedURL=s=>s.kind!=='file'&&(s.presetName||s.presetURL);
 function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*1000,now=Date.now}={}) {
   const running=new Map();
   async function refresh(source) {
-    if (running.has(source.id)) return running.get(source.id);
+    if (running.has(source)) return running.get(source);
     const task=Promise.resolve().then(async()=>{
       try {
-        const {name,...parsed}=await read(source.url,presetLimits(source.url));
-        if (sources.includes(source)) Object.assign(source,parsed,{name:source.presetName,updated:new Date(now()).toISOString(),syncError:''});
+        const {name,...parsed}=await read(source.url,presetLimits(source.presetURL||source.url));
+        if (sources.includes(source)) Object.assign(source,parsed,{name:source.presetName||name,updated:new Date(now()).toISOString(),syncError:'',transientFailure:false});
       } catch (e) {
-        if (sources.includes(source)) source.syncError=String(e?.message||'Не удалось прочитать источник.').slice(0,220);
+        if (sources.includes(source)) Object.assign(source,{syncError:String(e?.message||'Не удалось прочитать источник.').slice(0,220),transientFailure:retryable(e?.cause||e)});
         throw e;
       } finally {
-        running.delete(source.id);
+        running.delete(source);
         if(sources.includes(source))persist();
       }
     });
-    running.set(source.id,task);
+    running.set(source,task);
     return task;
   }
   async function runBatch(pending) {
@@ -72,8 +74,9 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
       }
     }));
   }
-  const startup=()=>runBatch(sources.filter(s=>s.presetName&&s.enabled&&(!s.updated||s.syncError||now()-Date.parse(s.updated)>=maxAge)));
-  const retryFailed=()=>runBatch(sources.filter(s=>s.presetName&&s.enabled&&(!s.updated||s.syncError)));
-  return {refresh,startup,retryFailed,loading:id=>running.has(id)};
+  const startup=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&(!s.updated||s.syncError||now()-Date.parse(s.updated)>=maxAge)));
+  const retryFailed=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&(!s.updated||s.syncError)));
+  const retryTransient=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&s.transientFailure));
+  return {refresh,startup,retryFailed,retryTransient,loading:id=>running.has(sources.find(s=>s.id===id))};
 }
-module.exports = {PRESETS,PRESET_LIMITS,presetLimits,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync};
+module.exports = {PRESETS,PRESET_LIMITS,presetLimits,managedURL,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync};

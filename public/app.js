@@ -279,7 +279,7 @@ async function refreshSourceList(n){
  const select=$('#source-search [name=sourceId]');
  const opts='<option value="">Все включённые источники</option>'+list.filter(s=>s.enabled).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
  if(select&&select._markup!==opts){select.innerHTML=opts;select._markup=opts;select.value=state.srcId;if(select.value!==state.srcId){state.srcId='';select.value='';state.srcPage=1;}}
- const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
+ const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],...(api.replaceSource?[['replace','Заменить список']]:[]),['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
  if(target._markup===html)return false;
  const focus=target.contains(document.activeElement)?document.activeElement.dataset:null;
  const entering=target._markup===undefined;
@@ -323,7 +323,24 @@ async function showSourceAudit(){
  }catch(e){if(dialog.open&&target.isConnected)target.textContent=e.message;}
  finally{target.setAttribute('aria-busy','false');}
 }
-function showSourcePreview(d){if(!d)return;showDialog('Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>Импортируйте источник, только если доверяете ему.</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="source-import" data-id="${esc(d.id)}">${I('check')} Импортировать</button></div>`);}
+function showSourcePreview(d,replacementId=''){
+ if(!d)return;
+ const changing=Boolean(replacementId);
+ showDialog(changing?'Проверка нового списка':'Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>${changing?'После подтверждения новый список заменит старый. Состояние «Включён» или «Отключён» сохранится.':'Импортируйте источник, только если доверяете ему.'}</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="${changing?'source-replace-commit':'source-import'}" data-id="${esc(d.id)}" data-source-id="${esc(replacementId)}" ${changing&&!d.count?'disabled':''}>${I('check')} ${changing?'Подтвердить замену':'Импортировать'}</button></div>`);
+}
+function replaceSourceDialog(id){
+ showDialog('Заменить список источника',`<p class="muted">Укажи рабочую прямую ссылку на Hydra JSON или выбери сохранённый файл. До подтверждения текущий список не меняется.</p><form id="source-replacement-form"><label class="field"><span>Новая ссылка на Hydra JSON</span><input type="url" name="url" placeholder="https://example.org/source.json" required maxlength="4096"></label><p class="source-url-status small" role="status"></p><div class="dialog-actions"><button type="button" class="btn" id="replacement-file">${I('file')} Выбрать JSON-файл</button><button type="submit" class="btn primary">${I('link')} Проверить ссылку</button></div></form>`);
+ const form=$('#source-replacement-form'), file=$('#replacement-file',form), submit=$('[type=submit]',form), status=$('[role=status]',form);
+ async function verify(read){
+  if(submit.disabled)return;
+  submit.disabled=file.disabled=true;status.classList.remove('is-error');status.textContent='Читаем список…';
+  try{const preview=await read();if(dialog.open&&form.isConnected){status.textContent='';if(preview)showSourcePreview(preview,id);}}
+  catch(e){if(dialog.open&&form.isConnected){status.classList.add('is-error');status.textContent=e.message;}}
+  finally{submit.disabled=file.disabled=false;}
+ }
+ form.onsubmit=e=>{e.preventDefault();return verify(()=>api.previewURL(String(new FormData(form).get('url')).trim(),id));};
+ file.onclick=()=>verify(()=>api.previewFile(id));
+}
 function searchInSources(term){
  state.srcTerm=String(term??'').trim().slice(0,200);state.srcPage=1;state.srcId='';
  go('sources');
@@ -414,7 +431,8 @@ async function dispatch(b){
   case 'source-file':return api.previewFile().then(showSourcePreview);
   case 'source-url':go('sources');queueMicrotask(()=>$('#source-url-input')?.focus());break;
   case 'source-import':return api.importSource(d.id).then(()=>{dialog.close();toast('Источник импортирован.');return render();});
-  case 'source-op':if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
+  case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
+  case 'source-op':if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
   case 'theme':return api.saveSettings({...state.settings,theme:d.themeId}).then(x=>{state.settings=x;applyTheme();if(state.section==='settings'){drawThemes();const selected=$('.theme-selected');selected?.focus({preventScroll:true});play(selected,[{scale:'.96'},{scale:'1.026',offset:.58},{scale:'1'}],{duration:360});}toast('Тема применена.');});
  }

@@ -4,7 +4,7 @@ const {parseSource,MAX_JSON}=require('./sources.cjs');
 
 const transient=new Set(['ETIMEDOUT','ECONNRESET','ECONNREFUSED','EHOSTUNREACH','ENETUNREACH','EAI_AGAIN','ABORT_ERR','ERR_STREAM_PREMATURE_CLOSE']);
 const retryableStatus=new Set([408,500,502,503,504]);
-function retryable(error){
+function retryable(error = {}){
  return !error.retryAfter&&(transient.has(error.code)||retryableStatus.has(error.statusCode)||error.name==='TimeoutError'||error.name==='AbortError');
 }
 function sourceError(error){
