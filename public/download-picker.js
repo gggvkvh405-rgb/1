@@ -14,12 +14,12 @@ export function describeLink(raw){
  return {label:'Неизвестная ссылка',detail:'Формат не поддерживается',supported:false};
 }
 
-export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,isCurrent}){
+export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,onPick,isCurrent}){
  const art=product.image?`<img alt="" src="${esc(product.image)}">`:'';
- showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p></div></header><div class="picker-main" aria-busy="true"></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
- const view=dialog.querySelector('.download-picker'), main=view.querySelector('.picker-main');
+ showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p></div></header><div class="picker-main" aria-busy="true"></div><div class="picker-related" hidden></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
+ const view=dialog.querySelector('.download-picker'), main=view.querySelector('.picker-main'), related=view.querySelector('.picker-related');
  const alive=()=>dialog.open&&view.isConnected&&isCurrent();
- let groups=[], groupIndex=0, serial=0, busy=false;
+ let groups=[], groupIndex=0, serial=0, relatedRequest=0, busy=false;
  const stateMarkup=(glyph,title,text,actions='')=>`<div class="picker-state"><span class="picker-state-icon">${I(glyph)}</span><div><strong>${title}</strong><p>${esc(text)}</p>${actions}</div></div>`;
  async function check(){
   main.setAttribute('aria-busy','true');
@@ -28,6 +28,7 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
    const found=await api.sourceMatches(product.title);
    if(!alive())return;
    groups=found.map(group=>({...group}));
+   void loadRelated(!groups.length);
    const preferred=groups.find(g=>g.id===product.preferred?.id);
    if(preferred&&!preferred.entries.some(e=>e.index===product.preferred.index)){
     preferred.entries=[{...product.preferred,linkCount:product.preferred.links.length},...preferred.entries];
@@ -40,6 +41,21 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
    const pending=feeds.some(s=>s.presetName&&s.enabled&&(s.loading||!s.updated&&!s.syncError));
    showEmpty(pending?'Некоторые списки ещё загружаются. Проверь ещё раз чуть позже.':'В загруженных списках нет совпадений по названию. Проверь, включён ли нужный источник.');
   }catch(e){if(alive())showEmpty(e.message,'Не удалось проверить источники');}
+ }
+ async function loadRelated(expanded){
+  const ticket=++relatedRequest;
+  try{
+   const {games,total}=await api.searchSources(product.title,1,'','related');
+   if(!alive()||ticket!==relatedRequest)return;
+   const entries=games.slice(0,6);
+   related.hidden=!entries.length;
+   if(!entries.length){related.replaceChildren();return;}
+   related.innerHTML=`<details ${expanded?'open':''}><summary>${I('search')} Похожие записи <span class="picker-count">${total}</span></summary><p>Проверь название: здесь могут быть другие издания или части серии.</p><div class="picker-related-list">${entries.map((entry,i)=>`<button type="button" data-related="${i}"><span><strong>${esc(entry.title)}</strong><small>${esc(entry.source)}${entry.size?' · '+esc(entry.size):''}</small></span>${I('chevron')}</button>`).join('')}</div><button type="button" class="btn" id="picker-related-all">${I('layers')} Все результаты</button></details>`;
+   related.querySelectorAll('[data-related]').forEach(button=>button.onclick=()=>{
+    if(alive()&&!busy)onPick(entries[Number(button.dataset.related)]);
+   });
+   related.querySelector('#picker-related-all').onclick=()=>{if(alive()&&!busy){dialog.close();onSearch();}};
+  }catch{/* Suggestions never block exact results. */}
  }
  function showEmpty(message,title='Нет источников для этой игры'){
   main.setAttribute('aria-busy','false');
@@ -89,7 +105,7 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
    button.onclick=async()=>{
     if(!alive()||busy||button.disabled)return;
     busy=true;
-    const controls=[...main.querySelectorAll('button,select')].filter(el=>!el.disabled);
+    const controls=[...view.querySelectorAll('button,select')].filter(el=>!el.disabled);
     controls.forEach(el=>el.disabled=true);
     status.textContent='Выбери место сохранения…';
     try{

@@ -316,7 +316,7 @@ function searchInSources(term){
 function openCatalogGame(product){
  if(!product)return;
  const version=renderId;
- openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
+ openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
 }
 const palettes=[['Аметист',263],['Океан',224],['Полярная ночь',193],['Мята',159],['Изумруд',138],['Лайм',80],['Янтарь',45],['Закат',23],['Рубин',355],['Орхидея',311]];
 const patterns=['Свечение','Горизонт','Сетка','Орбиты','Пунктир','Волны','Диагональ','Мозаика','Искры','Туман'];

@@ -75,7 +75,7 @@ async function bootstrap() {
       } else throw Error('Недопустимое действие.');
       persist();
     },
-    searchSources: (q,page,id) => searchSources(data.sources,q,page,id),
+    searchSources: (q,page,id,mode) => searchSources(data.sources,q,page,id,mode),
     availability: titles => availability(data.sources,titles),
     sourceMatches: title => sourceMatches(data.sources,title),
     sourceGame: (id,index,title) => readSourceGame(data.sources,id,index,title),

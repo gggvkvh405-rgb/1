@@ -30,11 +30,11 @@ test('catalog accepts release annotations, translated names and Roman sequels wi
   group('b','Второй',true,[game('Cyberpunk 2077 / Киберпанк 2077 [RUS/ENG] (2020)'),game('Red Dead Redemption II - Build 12345'),game('Red Dead Redemption III [v1.0]')])];
  const cyber=sourceMatches(sources,'Cyberpunk 2077');
  assert.deepEqual(cyber.map(s=>s.entries.map(e=>e.index)),[[1,0],[0]]);
- assert.deepEqual(sourceMatches(sources,'Киберпанк 2077').map(s=>s.id),['b']);
+ assert.deepEqual(sourceMatches(sources,'Киберпанк 2077').map(s=>s.id),['a','b']);
  assert.deepEqual(sourceMatches(sources,'Red Dead Redemption 2').map(s=>s.entries[0].index),[1]);
  assert.equal(sourceMatches(sources,'Red Dead Redemption').length,0);
  assert.deepEqual(availability(sources,['Cyberpunk 2077','Red Dead Redemption 2','Red Dead Redemption','Киберпанк 2077']),[
-  {title:'Cyberpunk 2077',sources:['Первый','Второй']},{title:'Red Dead Redemption 2',sources:['Второй']},{title:'Red Dead Redemption',sources:[]},{title:'Киберпанк 2077',sources:['Второй']}
+  {title:'Cyberpunk 2077',sources:['Первый','Второй']},{title:'Red Dead Redemption 2',sources:['Второй']},{title:'Red Dead Redemption',sources:[]},{title:'Киберпанк 2077',sources:['Первый','Второй']}
  ]);
 });
 
@@ -95,4 +95,25 @@ test('How to Fish card shows both screenshot release formats without confusing s
  assert.ok(searchSources(data,'How to Fish').games.some(g=>g.title===onlinefixTitle));
  assert.equal(readSourceGame(data,'fixes',0,onlinefixTitle).title,onlinefixTitle);
  assert.deepEqual(sourceMatches(data,'How to Fish 2')[0].entries.map(e=>e.title),['How to Fish 2','How to Fish 2 1.0.10']);
+});
+
+test('alternate storefront and localized names work across different games and feeds',()=>{
+ const {availability}=require('../core/state.cjs');
+ const data=[group('a','Aliases',true,[game('GTA 5 [Repack]'),game('GTA 5 Enhanced'),game('RDR 2 1.0.10'),game('The Witcher 3: Wild Hunt'),game('Хогвартс: Наследие'),game('Pokémon Quest')]),group('b','Disabled',false,[game('Grand Theft Auto V')])];
+ for(const [title,index] of [['Grand Theft Auto V',0],['Red Dead Redemption II',2],['Ведьмак 3: Дикая Охота',3],['Hogwarts Legacy',4],['Pokemon Quest',5]]){
+  assert.deepEqual(sourceMatches(data,title).map(s=>[s.id,s.entries.map(e=>e.index)]),[['a',[index]]]);
+  assert.deepEqual(availability(data,[title])[0].sources,['Aliases']);
+ }
+ assert.equal(sourceMatches(data,'Grand Theft Auto IV').length,0);
+});
+
+test('similar source records are separate from exact matches and never become an exact download automatically',()=>{
+ const {searchSources}=require('../core/state.cjs');
+ const rows=[game('Stardew Valley'),game('Stardew Valley Expanded'),game('Stardwe Valley [v1.0.1]'),game('Stardew Valley 2'),game('Stardew Valley: Deluxe Edition')];
+ const sources=[group('a','Feed',true,rows)];
+ assert.deepEqual(sourceMatches(sources,'Stardew Valley')[0].entries.map(e=>e.index),[0,4]);
+ assert.deepEqual(searchSources(sources,'Stardew Valley',1,'','related').games.map(e=>e.index),[1,3,2]);
+ assert.deepEqual(searchSources(sources,'Stardwe Valley').games.map(e=>e.index),[2,0,4]);
+ assert.deepEqual(searchSources(sources,'',1,'','related').games,[]);
+ assert.deepEqual(searchSources([group('b','Other',true,[game('Another Game 20')])],'Another Game 21').games,[]);
 });
