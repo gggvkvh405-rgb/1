@@ -26,7 +26,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Run Node tests
+        shell: pwsh
+        run: |
+          npm test | Tee-Object -FilePath tests.log
+          if ($LASTEXITCODE -ne 0) {
+            $lines = Select-String -Path tests.log -Pattern '^not ok' -Context 0,24
+            foreach ($line in $lines) {
+              $detail = ((@($line.Line) + $line.Context.PostContext) -join "`n").Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$detail"
+            }
+            throw 'Node tests failed'
+          }
       - run: npm run build:win
       - name: Verify the portable executable
         shell: pwsh
@@ -47,8 +58,12 @@ jobs:
               if ($proc.HasExited) { break }
             }
             if (!$started) { throw 'ByAzen window did not appear' }
-            node scripts/windows-smoke.cjs
-            if ($LASTEXITCODE -ne 0) { throw 'Portable renderer smoke test failed' }
+            node scripts/windows-smoke.cjs 2>&1 | Tee-Object -FilePath smoke.log
+            if ($LASTEXITCODE -ne 0) {
+              $detail = (Get-Content smoke.log -Raw).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+              Write-Output "::error::$detail"
+              throw 'Portable renderer smoke test failed'
+            }
           } finally {
             Get-Process ByAzen -ErrorAction SilentlyContinue | Stop-Process -Force
             if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force }
