@@ -248,7 +248,7 @@ async function refreshDownloads(n){
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
- content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',`${api.auditSources?btn('Проверить все источники','source-audit','refresh','primary'):''}${btn('Из файла','source-file','file')}`)}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}</form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div></div><div id="sources-list"></div>`;
+ content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',`${api.auditSources?btn('Проверить все источники','source-audit','refresh','primary'):''}${btn('Из файла','source-file','file')}`)}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}</form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div>${api.retrySourceLists?btn('Повторить загрузку списков','source-retry','refresh'):''}</div><div id="sources-list"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
  form.onsubmit=async e=>{
   e.preventDefault();
@@ -371,7 +371,7 @@ function confirmDialog(title,desc,callback){
  $('#confirm-action').onclick=()=>run(async()=>{await callback();dialog.close();});
 }
 function selectHero(k){state.featured=k;run(()=>render('hero'));}
-function dispatch(b){
+async function dispatch(b){
  const d=b.dataset, a=d.action, g=state.library.find(g=>g.id===d.id);
  if(d.go){if(dialog.open&&dialog.contains(b))dialog.close();return go(d.go);}
  if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a)){const game=games.find(x=>x.id===Number(a.split('-')[1]));if(game)return openCatalogGame({...game,image:'assets/'+game.image+'.jpg'});}
@@ -404,6 +404,13 @@ function dispatch(b){
   case 'new-download':return urlDialog('Новая загрузка','Укажите прямую HTTP(S)-ссылку на файл или magnet-ссылку. Затем выберите место сохранения.',async url=>{const added=await api.addDownload(url);if(added){dialog.close();await refreshDownloads(renderId);toast('Загрузка добавлена.');}});
   case 'download-op':return api.downloadAction(d.id,d.op).then(()=>refreshDownloads(renderId));
   case 'source-audit':return showSourceAudit();
+  case 'source-retry':{
+   if(!api.retrySourceLists)return;
+   const version=renderId;b.disabled=true;toast('Повторяем загрузку списков с ошибками.');
+   try{await api.retrySourceLists();if(current(version)){await refreshSourceList(version);await loadSourceGames(version);}toast('Проверка завершена. Статус каждого списка показан в «Источниках».');}
+   finally{b.disabled=false;}
+   break;
+  }
   case 'source-file':return api.previewFile().then(showSourcePreview);
   case 'source-url':go('sources');queueMicrotask(()=>$('#source-url-input')?.focus());break;
   case 'source-import':return api.importSource(d.id).then(()=>{dialog.close();toast('Источник импортирован.');return render();});

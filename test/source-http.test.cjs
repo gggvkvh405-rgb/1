@@ -22,3 +22,12 @@ test('source HTTP errors, HTML and oversized responses are rejected before impor
  await assert.rejects(readJSON(response(bomb,'gzip'),1024),/лимит/);
  await assert.rejects(readJSON(response(bytes),32),/лимит/);
 });
+
+test('a compressed source above the old cap fits the source-specific cap, but not the default',async()=>{
+ const {PRESETS,presetLimits,PRESET_LIMITS}=require('../core/presets.cjs');
+ const url=PRESETS.find(x=>x[0]==='xatab')[2];
+ const payload=gzipSync(Buffer.from(JSON.stringify({...fixture,padding:'x'.repeat(25*1048576)})));
+ await assert.rejects(readJSON(response(payload,'gzip'),PRESET_LIMITS.maxBytes),/лимит/);
+ const limit=presetLimits(url);
+ assert.equal(parseSource(await readJSON(response(payload,'gzip'),limit.maxBytes),limit).games.length,1);
+});

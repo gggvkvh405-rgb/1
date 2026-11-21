@@ -5,14 +5,15 @@ const {randomUUID} = require('node:crypto');
 const {pathToFileURL} = require('node:url');
 const {parseSource, MAX_JSON, sourceLink} = require('../core/sources.cjs');
 const {searchSteam} = require('../core/steam.cjs');
-const {webURL,getJSON} = require('../core/net.cjs');
+const {webURL} = require('../core/net.cjs');
 const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
 const {auditSources}=require('../core/source-audit.cjs');
-const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,PRESET_LIMITS}=require('../core/presets.cjs');
+const {createFeedReader}=require('../core/feed-reader.cjs');
+const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,presetLimits}=require('../core/presets.cjs');
 
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
@@ -28,9 +29,7 @@ async function bootstrap() {
   const previews = new Map(), exeTokens = new Map();
   function token(map,value) { const id = randomUUID(); map.set(id,value); if (map.size > 6) map.delete(map.keys().next().value); return id; }
   const find = (list,id) => { const value = list.find(x => x.id === id); if (!value) throw Error('Запись не найдена.'); return value; };
-  async function readSource(url,limits={maxBytes:MAX_JSON}) {
-    return parseSource(await getJSON(webURL(url).href,{max:limits.maxBytes}),limits);
-  }
+  const readSource=createFeedReader();
   async function readSourceFile(file){
     const fd=await fs.open(file,'r');
     try{
@@ -43,11 +42,11 @@ async function bootstrap() {
   }
   function readConnectedSource(source){
     if(source.kind==='file')return readSourceFile(source.file);
-    if(source.kind==='url')return readSource(source.url,source.presetName?PRESET_LIMITS:undefined);
+    if(source.kind==='url')return readSource(source.url,source.presetName?presetLimits(source.url):undefined);
     throw Error('Неизвестный вид источника.');
   }
   let auditTask;
-  const presetSync=createPresetSync(data.sources,readSource,persist);
+  const presetSync=createPresetSync(data.sources,readSource,persist,{concurrency:3});
   if(installPresets(data))persist();
   const actions = {
     settings: () => data.settings,
@@ -56,6 +55,7 @@ async function bootstrap() {
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
     sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
+    retrySourceLists: () => presetSync.retryFailed(),
     auditSources: () => auditTask||=(auditSources(data.sources,readConnectedSource).finally(()=>{auditTask=null;})),
     previewFile: async () => {
       const {filePaths:[file]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Hydra JSON',extensions:['json']}]});

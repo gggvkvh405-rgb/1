@@ -23,6 +23,9 @@ const PRESETS = [
   ['steamrip','SteamRIP','https://hydrasources.su/sources/steamrip.json'],
   ['atop','ATOP Games','https://hydrasources.su/sources/atop-games.json']
 ];
+const XATAB_URL=PRESETS.find(item=>item[0]==='xatab')[2];
+const XATAB_LIMITS={maxBytes:64 * 1024 * 1024,maxEntries:125000};
+function presetLimits(url){return urlKey(url)===XATAB_URL?XATAB_LIMITS:PRESET_LIMITS;}
 function urlKey(raw) {
   try {
     const url = webURL(raw);
@@ -47,7 +50,7 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
     if (running.has(source.id)) return running.get(source.id);
     const task=Promise.resolve().then(async()=>{
       try {
-        const {name,...parsed}=await read(source.url,PRESET_LIMITS);
+        const {name,...parsed}=await read(source.url,presetLimits(source.url));
         if (sources.includes(source)) Object.assign(source,parsed,{name:source.presetName,updated:new Date(now()).toISOString(),syncError:''});
       } catch (e) {
         if (sources.includes(source)) source.syncError=String(e?.message||'Не удалось прочитать источник.').slice(0,220);
@@ -60,8 +63,7 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
     running.set(source.id,task);
     return task;
   }
-  async function startup() {
-    const pending=sources.filter(s=>s.presetName&&s.enabled&&(!s.updated||now()-Date.parse(s.updated)>=maxAge));
+  async function runBatch(pending) {
     let index=0;
     await Promise.all(Array.from({length:Math.min(concurrency,pending.length)},async()=>{
       while(index<pending.length){
@@ -70,6 +72,8 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
       }
     }));
   }
-  return {refresh,startup,loading:id=>running.has(id)};
+  const startup=()=>runBatch(sources.filter(s=>s.presetName&&s.enabled&&(!s.updated||s.syncError||now()-Date.parse(s.updated)>=maxAge)));
+  const retryFailed=()=>runBatch(sources.filter(s=>s.presetName&&s.enabled&&(!s.updated||s.syncError)));
+  return {refresh,startup,retryFailed,loading:id=>running.has(id)};
 }
-module.exports = {PRESETS,PRESET_LIMITS,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync};
+module.exports = {PRESETS,PRESET_LIMITS,presetLimits,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync};

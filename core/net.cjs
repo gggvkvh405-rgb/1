@@ -14,37 +14,42 @@ function webURL(input) {
   return u;
 }
 function isPublic(address) { try { return ip.process(address).range() === 'unicast'; } catch { return false; } }
-async function publicAddress(host) {
+async function publicAddress(host, addressIndex = 0) {
   const addresses = await dns.lookup(host.replace(/^\[|\]$/g, ''), { all: true });
   if (!addresses.length || addresses.some(x => !isPublic(x.address))) throw Error('Локальные и служебные адреса запрещены.');
-  return addresses[0];
+  return addresses[((addressIndex % addresses.length)+addresses.length)%addresses.length];
 }
-async function request(input, {headers = {}, signal, validate = () => {}, redirects = 5} = {}) {
+async function request(input, {headers = {}, signal, validate = () => {}, redirects = 5, addressIndex = 0, connectMs = 12000, idleMs = 18000} = {}) {
   const u = webURL(input);
   validate(u);
-  const pinned = await publicAddress(u.hostname);
+  const pinned = await publicAddress(u.hostname,addressIndex);
   signal?.throwIfAborted();
   const res = await new Promise((resolve, reject) => {
     const req = (u.protocol === 'https:' ? https : http).get(u, {
       headers: { 'user-agent': 'ByAzen/1.0', 'accept-encoding': 'identity', ...headers }, signal, agent: false,
       lookup: (_, opts, cb) => opts.all ? cb(null, [pinned]) : cb(null, pinned.address, pinned.family)
     }, resolve);
-    req.setTimeout(18000, () => req.destroy(Error('Сервер не ответил вовремя.')));
+    const timeout=()=>req.destroy(Object.assign(Error('Сервер не ответил вовремя.'),{code:'ETIMEDOUT'}));
+    const connecting=setTimeout(timeout,connectMs); connecting.unref();
+    const connected=()=>clearTimeout(connecting);
+    req.once('response',connected);req.once('close',connected);
+    req.once('socket',socket=>socket.once(u.protocol==='https:'?'secureConnect':'connect',connected));
+    req.setTimeout(idleMs,timeout);
     req.on('error', reject);
   });
   if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
     res.destroy();
     if (!redirects) throw Error('Слишком много перенаправлений.');
-    return request(new URL(res.headers.location, u).href, {headers, signal, validate, redirects: redirects - 1});
+    return request(new URL(res.headers.location, u).href, {headers, signal, validate, redirects: redirects - 1,addressIndex,connectMs,idleMs});
   }
   return {res, url: u.href};
 }
 async function readJSON(res, max, signal) {
-  if (res.statusCode !== 200) { res.destroy(); throw Error(`Сервер вернул HTTP ${res.statusCode}.`); }
+  if (res.statusCode !== 200) { res.destroy(); throw Object.assign(Error(`Сервер вернул HTTP ${res.statusCode}.`),{statusCode:res.statusCode,retryAfter:res.headers?.['retry-after']}); }
   const encoding = String(res.headers['content-encoding'] || 'identity').trim().toLowerCase();
   const decoder = Object.hasOwn(decode, encoding) ? decode[encoding] : null;
   if (encoding !== 'identity' && !decoder) {res.destroy(); throw Error('Сервер использовал неподдерживаемое сжатие.');}
-  const sizeError = () => Error('Размер ответа превышает лимит.');
+  const sizeError = () => Error(`Размер ответа превышает лимит (${Math.round(max/1048576*10)/10} МБ).`);
   const chunks = []; let length = 0, received = 0;
   const compressed = new Transform({transform(chunk,_,cb){
     received+=chunk.length;
