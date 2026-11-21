@@ -163,12 +163,17 @@ test('a real multi-file torrent waits for selection and publishes only verified 
   queue.addTorrent(seeded.magnetURI,root,'Selective',undefined,true);const job=items[0];
   for(let i=0;i<140&&job.phase!=='selecting-files'&&job.status!=='error';i++)await wait(50);
   assert.equal(job.phase,'selecting-files',job.error);assert.equal(job.bytes,0);
+  await queue.action(job.id,'pause');await until(()=>job.status==='paused');
+  assert.throws(()=>queue.torrentFiles(job.id,1),/недоступен/);
+  await queue.action(job.id,'resume');
+  for(let i=0;i<140&&job.phase!=='selecting-files'&&job.status!=='error';i++)await wait(50);
+  assert.equal(job.phase,'selecting-files',job.error);
   const files=queue.torrentFiles(job.id,1);assert.equal(files.total,2);
   const chosen=files.rows.find(f=>path.basename(f.name)==='chosen.bin');assert.ok(chosen);
   assert.throws(()=>queue.setTorrentFiles(job.id,[-1]),/Отметьте/);
   queue.setTorrentFiles(job.id,[chosen.index]);
   for(let i=0;i<140&&!['done','error'].includes(job.status);i++)await wait(50);
-  assert.equal(job.status,'done',job.error);assert.equal(job.total,one.length);assert.equal(job.bytes,one.length);
+  assert.equal(job.status,'done',job.error);assert.equal(job.total,one.length);assert.equal(job.bytes,one.length);assert.deepEqual(job.selection,[chosen.index]);
   assert.ok((await fsp.readFile(path.join(job.file,chosen.name))).equals(one));
   await assert.rejects(fsp.stat(path.join(job.file,files.rows.find(f=>f.index!==chosen.index).name)));
   await assert.rejects(fsp.stat(job.partial));
