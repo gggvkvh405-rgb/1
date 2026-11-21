@@ -81,3 +81,18 @@ test('wrong keyboard layout only expands manual search and preserves exact match
  assert.deepEqual(searchSources(sources,'cnfkrth').games.map(g=>g.title),['Сталкер']);
  assert.deepEqual(sourceMatches(sources,'ьуекщ 2033'),[]);
 });
+
+test('How to Fish card shows both screenshot release formats without confusing sequels',()=>{
+ const {availability,searchSources}=require('../core/state.cjs');
+ const trackerTitle='How to Fish [P] [RUS + ENG + 14] (2026, Simulation) (1.1.3) [Portable]';
+ const onlinefixTitle='How to Fish 1.0.10';
+ const tracker=group('tracker','RuTracker & Rutor',true,[game(trackerTitle,'394.6 MB')]);
+ const fixes=group('fixes','OnlineFix',true,[game(onlinefixTitle,'400.1 MB'),game('How to Fish 2'),game('How to Fish 2 1.0.10'),game('How to Fish 2026'),game('How to Fish 2026.10.20'),game('How to Fish 1.5'),game('How to Fish 1.0.10 [Demo]')]);
+ const data=[tracker,fixes];
+ const matches=sourceMatches(data,'How to Fish');
+ assert.deepEqual(matches.map(s=>[s.name,s.entries.map(e=>e.title)]),[['RuTracker & Rutor',[trackerTitle]],['OnlineFix',[onlinefixTitle]]]);
+ assert.deepEqual(availability(data,['How to Fish']),[{title:'How to Fish',sources:['RuTracker & Rutor','OnlineFix']}]);
+ assert.ok(searchSources(data,'How to Fish').games.some(g=>g.title===onlinefixTitle));
+ assert.equal(readSourceGame(data,'fixes',0,onlinefixTitle).title,onlinefixTitle);
+ assert.deepEqual(sourceMatches(data,'How to Fish 2')[0].entries.map(e=>e.title),['How to Fish 2','How to Fish 2 1.0.10']);
+});

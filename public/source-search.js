@@ -13,6 +13,9 @@ const trailingEdition = new RegExp(String.raw`(?:^|\s|\s*[:–—]\s*)${edition}
 const trailingTag = /(?:\s+|\s*[-–—,:]\s*)(?:(?:v(?:er(?:sion)?)?\.?|версия)\s*\d+(?:\.\d+)*[a-z0-9.-]*|(?:build|сборка)\s*#?\s*\d+[a-z0-9.-]*|repack(?:\s+by\s+[\p{L}\p{N}_.-]+(?:\s+[\p{L}\p{N}_.-]+){0,4})?|gog|steamrip|portable|early\s+access|fitgirl(?:\s+repacks?)?|dodi(?:\s+repacks?)?|multi\s*\d+|x64)(?:\s*(?:\+|,)\s*[\p{L}\p{N}][\p{L}\p{N} .#-]*)?$/iu;
 // Shisuy’s Source and similar catalogs append this text before version/build metadata.
 const trailingSiteText = /\s+(?:free\s+download|скачать\s+бесплатно)\s*$/iu;
+// Unlabelled OnlineFix versions have at least three dotted components. Keep
+// standalone sequel numbers, two-component names and year-first dates intact.
+const trailingBareVersion = /\s+\d{1,3}(?:\.\d{1,10}){2,4}\s*$/u;
 const extraContent = /\s*\+\s*(?:bonus\s+content|бонусные\s+материалы)\s*$/iu;
 const taggedDlc = /\s*\+\s*(?:(?:all|\d+|все)\s*)?(?:dlcs?|дополнения)(?:\s*\+\s*(?:bonus(?:es)?|soundtrack|бонусы))*\s*$/iu;
 const releaseMetadata = /^(?:(?:v(?:er(?:sion)?)?\.?|версия)\s*\d|(?:build|сборка)\s*#?\s*\d|\d+\.\d+(?:\.\d+)*\b|(?:repack|репак|rip|portable|early access|scene|gog|steamrip|fitgirl|dodi|xatab|linux|windows|multilingual|multi\s*\d+|x64|x86|rus|eng|русский|английский)\b|(?:19|20)\d{2}\b(?=$|\s*[,|/])|(?:all\s+|\d+\s+)?dlcs?\b(?=$|\s*[,|/+]))/iu;
@@ -28,7 +31,7 @@ function stripRelease(text){
   const bracket=value.match(/\s*(?:\(([^()]*)\)|\[([^\[\]]*)\]|\{([^{}]*)\})\s*$/u);
   if(bracket&&asTag(bracket[1]??bracket[2]??bracket[3])&&!blockedRelease.test(bracket[0]))value=value.slice(0,bracket.index);
   else {
-   const without=value.replace(trailingSiteText,'').replace(extraContent,'').replace(taggedDlc,'').replace(trailingTag,'').replace(trailingEdition,'');
+   const without=value.replace(trailingSiteText,'').replace(extraContent,'').replace(taggedDlc,'').replace(trailingTag,'').replace(trailingBareVersion,'').replace(trailingEdition,'');
    if(without===value)break;
    value=without;
   }
