@@ -56,3 +56,33 @@ test('embedded engine receives and saves a verified torrent from a local test pe
   await assert.rejects(fsp.stat(job.partial));
  }finally{await new Promise(resolve=>sender.destroy(resolve));}
 });
+test('tracker budget skips unsupported and duplicate entries and DNS pins to the IPv4 transport',async()=>{
+ const u=new URL(magnet), calls=[];
+ for(let i=0;i<13;i++)u.searchParams.append('tr',`https://unsupported.example/${i}`);
+ u.searchParams.append('tr','udp://dual.example:6969/a');
+ u.searchParams.append('tr','udp://dual.example:6969/b');
+ const result=await prepareMagnet(u.href,(...args)=>{
+  calls.push(args);return args[2]===4?{family:4,address:'1.1.1.1'}:{family:6,address:'2606:4700:4700::1111'};
+ });
+ assert.deepEqual(calls,[['dual.example',0,4]]);
+ assert.deepEqual(new URL(result).searchParams.getAll('tr'),['udp://1.1.1.1:6969/announce']);
+});
+test('explicit magnet peers accept only bounded public numeric endpoints',async()=>{
+ const u=new URL(magnet);
+ for(const addr of ['8.8.8.8:6000','[2606:4700:4700::1111]:443','8.8.8.8:06000','127.0.0.1:80','[::ffff:10.0.0.1]:80','example.org:80','010.001.001.001:80','1.1.1.1:65536'])u.searchParams.append('x.pe',addr);
+ const parsed=(await import('magnet-uri')).default(await prepareMagnet(u.href));
+ assert.deepEqual(parsed.peerAddresses,['8.8.8.8:6000','[2606:4700:4700::1111]:443']);
+});
+test('download reports whether a handshake occurred before metadata timed out',async t=>{
+ const {EventEmitter}=require('node:events'), root=await temp(t);
+ for(const connected of [false,true]){
+  class FixtureClient extends EventEmitter{
+   add(){const torrent=new EventEmitter();if(connected)queueMicrotask(()=>torrent.emit('wire'));return torrent;}
+   destroy(done){done();}
+  }
+  const job={url:magnet,partial:path.join(root,String(connected))}, phases=[];
+  const transfer=torrentDownload(job,AbortSignal.timeout(500),()=>phases.push(job.phase),{engine:FixtureClient,storage:class {},metadataTimeout:15});
+  await Promise.all([assert.rejects(transfer,connected?/не передали метаданные/:/Не удалось подключиться к участникам/),wait(30)]);
+  assert.deepEqual(phases,connected?['metadata','waiting-metadata']:['metadata']);
+ }
+});

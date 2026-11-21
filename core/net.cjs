@@ -14,10 +14,12 @@ function webURL(input) {
   return u;
 }
 function isPublic(address) { try { return ip.process(address).range() === 'unicast'; } catch { return false; } }
-async function publicAddress(host, addressIndex = 0) {
+async function publicAddress(host, addressIndex = 0, family = 0) {
   const addresses = await dns.lookup(host.replace(/^\[|\]$/g, ''), { all: true });
   if (!addresses.length || addresses.some(x => !isPublic(x.address))) throw Error('Локальные и служебные адреса запрещены.');
-  return addresses[((addressIndex % addresses.length)+addresses.length)%addresses.length];
+  const usable=family?addresses.filter(address=>address.family===family):addresses;
+  if(!usable.length)throw Error('Нет адреса для поддерживаемой версии IP.');
+  return usable[((addressIndex % usable.length)+usable.length)%usable.length];
 }
 async function request(input, {headers = {}, signal, validate = () => {}, redirects = 5, addressIndex = 0, connectMs = 12000, idleMs = 18000} = {}) {
   const u = webURL(input);

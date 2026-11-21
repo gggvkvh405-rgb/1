@@ -1,6 +1,7 @@
 const fs=require('node:fs');
 const fsp=require('node:fs/promises');
 const path=require('node:path');
+const {isIP}=require('node:net');
 const {pipeline}=require('node:stream/promises');
 const {isPublic,publicAddress}=require('./net.cjs');
 const {sourceLink}=require('./sources.cjs');
@@ -10,21 +11,45 @@ function magnetV1(raw){
  const u=new URL(sourceLink(raw));
  const xt=u.searchParams.getAll('xt').find(x=>/^urn:btih:(?:[a-f0-9]{40}|[a-z2-7]{32})$/i.test(x));
  if(!xt)throw Error('Поддерживаются magnet-ссылки BitTorrent v1 и гибридные v1/v2; у этой ссылки нет v1-хеша.');
- return {xt,trackers:u.searchParams.getAll('tr').slice(0,12)};
+ return {xt,trackers:u.searchParams.getAll('tr'),peers:u.searchParams.getAll('x.pe')};
+}
+function publicPeer(raw){
+ const match=/^(?:\[([0-9a-f:]+)\]|(\d{1,3}(?:\.\d{1,3}){3})):(\d{1,5})$/i.exec(raw);
+ if(!match)return '';
+ const address=match[1]||match[2], port=Number(match[3]);
+ if(!port||port>65535||!isIP(address)||!isPublic(address))return '';
+ return `${match[1]?'['+address+']':address}:${port}`;
 }
 async function prepareMagnet(raw, lookup=publicAddress){
- const {xt,trackers}=magnetV1(raw);
+ const {xt,trackers,peers}=magnetV1(raw);
  const base=`magnet:?xt=${xt.toLowerCase()}`;
- const approved=await Promise.all(trackers.map(async raw=>{
+ const candidates=new Map();
+ for(const raw of trackers){
   try {
    const tracker=new URL(raw);
-   if(tracker.protocol!=='udp:'||!tracker.port||tracker.username||tracker.password)return '';
-   const {address,family}=await lookup(tracker.hostname);
-   if(!isPublic(address))return '';
-   return `udp://${family===6?'['+address+']':address}:${tracker.port}${tracker.pathname||'/announce'}`;
+   if(tracker.protocol!=='udp:'||!tracker.port||tracker.port==='0'||!tracker.hostname||tracker.username||tracker.password)continue;
+   // The embedded UDP tracker client uses udp4. Pin to a validated IPv4
+   // answer even when a dual-stack DNS response lists IPv6 first.
+   const key=`${tracker.hostname.toLowerCase()}:${tracker.port}`;
+   if(!candidates.has(key))candidates.set(key,tracker);
+  }catch{}
+  if(candidates.size>=12)break;
+ }
+ const approved=await Promise.all([...candidates.values()].map(async tracker=>{
+  try{
+   const {address,family}=await lookup(tracker.hostname,0,4);
+   if(family!==4||!isPublic(address))return '';
+   return `udp://${address}:${tracker.port}/announce`;
   }catch{return '';}
  }));
- return base+[...new Set(approved.filter(Boolean))].map(tracker=>'&tr='+encodeURIComponent(tracker)).join('');
+ const direct=[...new Set(peers.map(publicPeer).filter(Boolean))].slice(0,8);
+ // magnet-uri expects raw numeric x.pe addresses, not percent-encoded values.
+ return base+[...new Set(approved.filter(Boolean))].map(tracker=>'&tr='+encodeURIComponent(tracker)).join('')+direct.map(peer=>'&x.pe='+peer).join('');
+}
+function metadataError(connected){
+ return Error(connected
+  ? 'Участники подключались, но не передали метаданные. Повторите попытку или выберите другую раздачу.'
+  : 'Не удалось подключиться к участникам раздачи. Проверьте сеть или выберите другой источник или версию.');
 }
 function filePlan(files){
  if(!files.length||files.length>15000)throw Error('Некорректное количество файлов в торренте.');
@@ -61,7 +86,7 @@ async function publish(job,files,signal){
   await fsp.rename(stage,job.file);
  }finally{await fsp.rm(stage,{recursive:true,force:true});}
 }
-async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet}={}){
+async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000}={}){
  const uri=await pin(job.url);
  signal.throwIfAborted();
  const Client=engine||(await import('webtorrent')).default;
@@ -84,17 +109,22 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
   if(typeof torrent?.length==='number'&&torrent.length>0){job.total=torrent.length;job.bytes=Math.min(job.total,torrent.downloaded||0);}
  }
  try{
+  let connected=false;
   job.phase='metadata';persist();
   await new Promise((resolve,reject)=>{
    failure=reject;
    const abort=()=>reject(signal.reason);
    signal.addEventListener('abort',abort,{once:true});
-   const timeout=setTimeout(()=>reject(Error('Не удалось найти метаданные. Проверьте ссылку и наличие участников.')),90000);
+   const timeout=setTimeout(()=>reject(metadataError(connected)),metadataTimeout);
    timeout.unref();
    cleanupWait=()=>{clearTimeout(timeout);signal.removeEventListener('abort',abort);};
    if(signal.aborted){abort();return;}
    torrent=client.add(uri,{store:FlatStore,storeCacheSlots:8});
    torrent.on('error',onFail);
+   torrent.once('wire',()=>{
+    connected=true;
+    if(job.phase==='metadata'){job.phase='waiting-metadata';persist();}
+   });
    torrent.once('metadata',()=>{
     clearTimeout(timeout);
     try{filePlan(torrent.files);job.phase='pieces';track();persist();}

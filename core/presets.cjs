@@ -24,6 +24,26 @@ const PRESETS = [
   ['steamrip','SteamRIP','https://hydrasources.su/sources/steamrip.json'],
   ['atop','ATOP Games','https://hydrasources.su/sources/atop-games.json']
 ];
+const [ONLINEFIX_KEY,ONLINEFIX_NAME,ONLINEFIX_URL]=PRESETS.find(item=>item[0]==='onlinefix-su');
+const isPrimaryOnlineFix=s=>s.kind==='url'&&urlKey(s.url)===ONLINEFIX_URL;
+function prioritizeOnlineFix(sources){
+ const index=sources.findIndex(isPrimaryOnlineFix);
+ return index>0?[sources[index],...sources.slice(0,index),...sources.slice(index+1)]:sources;
+}
+function connectOnlineFix(sources){
+ let source=sources.find(isPrimaryOnlineFix);
+ if(!source){
+  const base=`preset-${ONLINEFIX_KEY}`;
+  let id=base, number=2;
+  while(sources.some(s=>s.id===id))id=`${base}-${number++}`;
+  source={id,kind:'url',url:ONLINEFIX_URL,name:ONLINEFIX_NAME,presetName:ONLINEFIX_NAME,enabled:true,games:[],updated:''};
+  sources.push(source);
+ }
+ source.enabled=true;
+ source.presetName=ONLINEFIX_NAME;
+ source.name=ONLINEFIX_NAME;
+ return source;
+}
 const XATAB_URL=PRESETS.find(item=>item[0]==='xatab')[2];
 const XATAB_LIMITS={maxBytes:64 * 1024 * 1024,maxEntries:125000};
 function presetLimits(url){return urlKey(url)===XATAB_URL?XATAB_LIMITS:PRESET_LIMITS;}
@@ -53,7 +73,9 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
     const task=Promise.resolve().then(async()=>{
       try {
         const {name,...parsed}=await read(source.url,presetLimits(source.presetURL||source.url));
-        if (sources.includes(source)) Object.assign(source,parsed,{name:source.presetName||name,updated:new Date(now()).toISOString(),syncError:'',transientFailure:false});
+        if(!sources.includes(source))return;
+        if(!parsed.games.length)throw Error('В списке нет записей с допустимыми ссылками. Сохранённые данные не изменены.');
+        Object.assign(source,parsed,{name:source.presetName||name,updated:new Date(now()).toISOString(),syncError:'',transientFailure:false});
       } catch (e) {
         if (sources.includes(source)) Object.assign(source,{syncError:String(e?.message||'Не удалось прочитать источник.').slice(0,220),transientFailure:retryable(e?.cause||e)});
         throw e;
@@ -66,6 +88,7 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
     return task;
   }
   async function runBatch(pending) {
+    pending=prioritizeOnlineFix(pending);
     let index=0;
     await Promise.all(Array.from({length:Math.min(concurrency,pending.length)},async()=>{
       while(index<pending.length){
@@ -79,4 +102,4 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
   const retryTransient=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&s.transientFailure));
   return {refresh,startup,retryFailed,retryTransient,loading:id=>running.has(sources.find(s=>s.id===id))};
 }
-module.exports = {PRESETS,PRESET_LIMITS,presetLimits,managedURL,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync};
+module.exports = {PRESETS,PRESET_LIMITS,presetLimits,managedURL,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync,isPrimaryOnlineFix,prioritizeOnlineFix,connectOnlineFix};

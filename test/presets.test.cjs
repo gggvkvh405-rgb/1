@@ -47,3 +47,32 @@ test('configured feed accepts more records without raising the custom import lim
  assert.equal(parseSource(input,PRESET_LIMITS).games.length,10001);
  assert.throws(()=>parseSource({name:'Feed directory',sources:[]},PRESET_LIMITS),/Hydra JSON/);
 });
+test('the known OnlineFix feed is enabled once by default, prioritized and can be restored explicitly',async()=>{
+ const {connectOnlineFix,isPrimaryOnlineFix,prioritizeOnlineFix}=require('../core/presets.cjs');
+ const data={sources:[]};installPresets(data);
+ const online=data.sources.find(isPrimaryOnlineFix);
+ assert.equal(online.enabled,true);
+ assert.equal(prioritizeOnlineFix(data.sources)[0],online);
+ assert.notEqual(data.sources[0],online);
+ const calls=[], sync=createPresetSync(data.sources,async url=>{calls.push(url);return {name:'Fixture',games:[{title:'Fixture',links:['https://example.test/x']}]};},()=>{});
+ await sync.startup();assert.equal(calls[0],online.url);
+ const cached=online.games;
+ online.enabled=false;
+ assert.equal(sourceMatches(prioritizeOnlineFix(data.sources),'Fixture').some(s=>s.id===online.id),false);
+ assert.equal(connectOnlineFix(data.sources),online);
+ assert.equal(online.games,cached);assert.equal(online.enabled,true);
+ assert.equal(sourceMatches(prioritizeOnlineFix(data.sources),'Fixture')[0].id,online.id);
+ const other={...online,url:'https://example.test/replacement.json'};
+ data.sources[data.sources.indexOf(online)]=other;
+ const restored=connectOnlineFix(data.sources);
+ assert.notEqual(restored.id,online.id);assert.equal(restored.url,online.url);
+ assert.equal(connectOnlineFix(data.sources),restored);
+ assert.equal(data.sources.filter(isPrimaryOnlineFix).length,1);
+ assert.equal(data.sources.find(s=>s.id===other.id),other);
+});
+test('a successful HTTP response with an empty list does not replace a cached feed',async()=>{
+ const cached=[{title:'Cached'}], source={kind:'url',presetName:'Feed',games:cached,enabled:true,updated:'before'};
+ const sync=createPresetSync([source],async()=>({name:'Empty',games:[]}),()=>{});
+ await assert.rejects(sync.refresh(source),/нет записей/);
+ assert.equal(source.games,cached);assert.equal(source.updated,'before');assert.match(source.syncError,/нет записей/);
+});

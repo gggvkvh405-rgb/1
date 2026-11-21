@@ -14,7 +14,7 @@ const {readState,saveState,sourcesSummary,searchSources,availability,updateSetti
 const {auditSources}=require('../core/source-audit.cjs');
 const {createFeedReader}=require('../core/feed-reader.cjs');
 const {commitReplacement}=require('../core/source-replacement.cjs');
-const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,presetLimits,managedURL}=require('../core/presets.cjs');
+const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,presetLimits,managedURL,isPrimaryOnlineFix,prioritizeOnlineFix,connectOnlineFix}=require('../core/presets.cjs');
 
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
@@ -62,7 +62,13 @@ async function bootstrap() {
     steam: searchSteam,
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
-    sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
+    sources: () => sourcesSummary(prioritizeOnlineFix(data.sources)).map(s=>({...s,primaryOnlineFix:isPrimaryOnlineFix(s),loading:presetSync.loading(s.id)})),
+    connectOnlineFix: async () => {
+      const source=connectOnlineFix(data.sources);
+      persist();
+      if(!source.updated||source.syncError)await presetSync.refresh(source);
+      return {id:source.id,count:source.games.length};
+    },
     retrySourceLists: () => presetSync.retryFailed(),
     auditSources: () => auditTask||=(auditSources(data.sources,readConnectedSource).finally(()=>{auditTask=null;})),
     previewFile: async (id) => {
@@ -100,7 +106,7 @@ async function bootstrap() {
     },
     searchSources: (q,page,id,mode) => searchSources(data.sources,q,page,id,mode),
     availability: titles => availability(data.sources,titles),
-    sourceMatches: title => sourceMatches(data.sources,title),
+    sourceMatches: title => sourceMatches(prioritizeOnlineFix(data.sources),title),
     sourceGame: (id,index,title) => readSourceGame(data.sources,id,index,title),
     openSource: async (sourceId,index,linkIndex,action,expected) => {
       const src = find(data.sources,sourceId);
