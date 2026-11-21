@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://*.steamstatic.com https://steamcdn-a.akamaihd.net; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#101010">
+<title>ByAzen — игровой лаунчер</title>
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="reference.css">
+<link rel="stylesheet" href="catalog.css">
+<link rel="stylesheet" href="motion.css">
+<link rel="stylesheet" href="download-picker.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar" aria-label="Боковая панель">
+    <button id="profile" class="profile" title="Настройки профиля" aria-label="Настройки профиля"></button>
+    <nav aria-label="Главная навигация">
+      <div id="nav"></div>
+      <div class="side-tools">
+        <form class="global-search" id="global-search"><input type="search" id="global-input" aria-label="Поиск игр" placeholder="Поиск" maxlength="100" title="Поиск в Steam и источниках (Ctrl+K)"></form>
+        <button class="quick-button" id="source-shortcut" data-go="sources" aria-label="Источники" title="Источники"></button>
+        <button class="quick-button" id="filter-shortcut" data-go="catalog" aria-label="Фильтры каталога" title="Фильтры каталога"></button>
+      </div>
+    </nav>
+    <div class="side-library" aria-label="Моя библиотека"><div id="side-games"></div></div>
+  </aside>
+  <div class="stage">
+    <main id="content" tabindex="-1"></main>
+  </div>
+</div>
+<button type="button" id="feedback" data-action="feedback">Send Feedback</button>
+<dialog id="dialog" aria-labelledby="dialog-title"><div id="dialog-body"></div></dialog>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>
