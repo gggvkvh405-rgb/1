@@ -2,6 +2,9 @@ const https = require('node:https');
 const http = require('node:http');
 const dns = require('node:dns/promises');
 const ip = require('ipaddr.js');
+const {Transform,Writable} = require('node:stream');
+const {pipeline} = require('node:stream/promises');
+const {createGunzip,createInflate,createBrotliDecompress} = require('node:zlib');
 
 function webURL(input) {
   if (typeof input !== 'string' || input.length > 4096 || /[\x00-\x20\x7f]/.test(input)) throw Error('Некорректный URL.');
@@ -36,16 +39,28 @@ async function request(input, {headers = {}, signal, validate = () => {}, redire
   }
   return {res, url: u.href};
 }
-async function getJSON(url, {max = 4 * 1024 * 1024, ...opts} = {}) {
-  const {res} = await request(url, {...opts, signal: opts.signal || AbortSignal.timeout(25000)});
+async function readJSON(res, max, signal) {
   if (res.statusCode !== 200) { res.destroy(); throw Error(`Сервер вернул HTTP ${res.statusCode}.`); }
-  const chunks = []; let length = 0;
-  for await (const chunk of res) {
-    length += chunk.length;
-    if (length > max) { res.destroy(); throw Error('Размер ответа превышает лимит.'); }
-    chunks.push(chunk);
-  }
+  const encoding = String(res.headers['content-encoding'] || 'identity').trim().toLowerCase();
+  const decoder = Object.hasOwn(decode, encoding) ? decode[encoding] : null;
+  if (encoding !== 'identity' && !decoder) {res.destroy(); throw Error('Сервер использовал неподдерживаемое сжатие.');}
+  const sizeError = () => Error('Размер ответа превышает лимит.');
+  const chunks = []; let length = 0, received = 0;
+  const compressed = new Transform({transform(chunk,_,cb){
+    received+=chunk.length;
+    if(received>max)cb(sizeError());else cb(null,chunk);
+  }});
+  const collect = new Writable({write(chunk,_,cb){
+    length+=chunk.length;
+    if(length>max)cb(sizeError());else{chunks.push(chunk);cb();}
+  }});
+  await pipeline(res,...(decoder?[compressed,decoder()]:[]),collect,{signal});
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '')); }
-  catch { throw Error('Ответ не является корректным JSON.'); }
+  catch { throw Error('Ответ не является корректным JSON. Укажите прямую ссылку на файл.'); }
 }
-module.exports = {webURL, isPublic, request, getJSON};
+const decode = { gzip:createGunzip, deflate:createInflate, br:createBrotliDecompress };
+async function getJSON(url, {max = 4 * 1024 * 1024, signal = AbortSignal.timeout(25000), headers = {}, ...opts} = {}) {
+  const {res} = await request(url,{...opts,signal,headers:{'accept-encoding':'gzip, deflate, br',...headers}});
+  return readJSON(res,max,signal);
+}
+module.exports = {webURL, isPublic, request, getJSON, readJSON};

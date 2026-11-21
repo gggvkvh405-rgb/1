@@ -137,7 +137,8 @@ async function catalog(n){
   if(!current(n))return;
   const active=[...new Set(all.filter(x=>x.enabled).map(x=>x.name))];
   catalogLocal.sources=catalogLocal.sources.filter(x=>active.includes(x));
-  sourceBox.innerHTML=active.length?`<p class="facet-help">Активные источники на этой странице</p>${checklist(active.map(x=>[x,x]),catalogLocal.sources,'catalogSource','Поиск источников')}`:`<p class="muted">Нет подключённых источников.</p><button type="button" class="text-btn" data-go="sources">Управлять источниками ${I('arrow')}</button>`;
+  sourceBox.innerHTML=(active.length?`<p class="facet-help">Активные источники на этой странице</p>${checklist(active.map(x=>[x,x]),catalogLocal.sources,'catalogSource','Поиск источников')}`:'<p class="muted">Нет подключённых источников.</p>')+
+   `<button type="button" class="text-btn" data-action="source-url">${I('plus')} Добавить по ссылке</button><button type="button" class="text-btn" data-go="sources">Управлять источниками ${I('arrow')}</button>`;
   drawPage();
  }).catch(()=>{if(current(n))sourceBox.textContent='Не удалось загрузить источники.';});
  try{pageResult=await api.steam({...f,cc:f.cc||state.settings.region});}
@@ -197,7 +198,17 @@ async function refreshDownloads(n){
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
- content.innerHTML=`${head('ПОЛЬЗОВАТЕЛЬСКИЕ ИСТОЧНИКИ','Источники','Импортируйте свои списки загрузок в формате Hydra JSON.',btn('Из файла','source-file','file')+btn('По URL','source-url','link','primary'))}<div class="notice">${I('alert')}<span>По умолчанию источников нет. Вы отвечаете за доверие к источнику, безопасность файлов и право их скачивать.</span></div><div id="sources-list"></div><div class="section-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div>`;
+ content.innerHTML=`${head('ПОЛЬЗОВАТЕЛЬСКИЕ ИСТОЧНИКИ','Источники','Импортируйте свои списки загрузок в формате Hydra JSON.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>По умолчанию источников нет. Вы отвечаете за доверие к источнику, безопасность файлов и право их скачивать.</span></div><div id="sources-list"></div><div class="section-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div>`;
+ const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
+ form.onsubmit=async e=>{
+  e.preventDefault();
+  const submit=$('button[type="submit"]',form), value=input.value.trim();
+  if(submit.disabled)return;
+  submit.disabled=true; status.classList.remove('is-error');status.textContent='Читаем JSON…';
+  try {const preview=await api.previewURL(value);if(current(n)){status.textContent='';showSourcePreview(preview);}}
+  catch(e){if(current(n)){status.classList.add('is-error'); status.textContent=e.message;}}
+  finally{submit.disabled=false;}
+ };
  $('#source-search').onsubmit=e=>{e.preventDefault();state.srcTerm=new FormData(e.currentTarget).get('term');state.srcPage=1;run(()=>loadSourceGames(n));};
  const list=await api.sources();if(!current(n))return;
  $('#sources-list').innerHTML=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span></h3><p>${s.count} игр · Обновлён ${date(s.updated)} · ${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
@@ -285,7 +296,7 @@ function dispatch(b){
   case 'new-download':return urlDialog('Новая загрузка','Укажите прямую ссылку на файл. В приложении затем можно выбрать место сохранения.',async url=>{const added=await api.addDownload(url);if(added){dialog.close();await refreshDownloads(renderId);toast('Загрузка добавлена.');}});
   case 'download-op':return api.downloadAction(d.id,d.op).then(()=>refreshDownloads(renderId));
   case 'source-file':return api.previewFile().then(showSourcePreview);
-  case 'source-url':return urlDialog('Импорт источника по URL','Укажите ссылку на файл Hydra JSON.',async url=>showSourcePreview(await api.previewURL(url)));
+  case 'source-url':go('sources');queueMicrotask(()=>$('#source-url-input')?.focus());break;
   case 'source-import':return api.importSource(d.id).then(()=>{dialog.close();toast('Источник импортирован.');return render();});
   case 'source-op':if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':return sourceLinkDialog(shownSourceGames[Number(d.index)]);

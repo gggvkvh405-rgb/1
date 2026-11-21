@@ -72,7 +72,7 @@ async function bootstrap() {
       if (url !== expected) throw Error('Источник изменился. Откройте ссылку повторно.');
       if (action === 'client' && url.startsWith('magnet:')) await shell.openExternal(url);
       else if (action === 'browser' && !url.startsWith('magnet:')) await shell.openExternal(webURL(url).href);
-      else if (action === 'download' && !url.startsWith('magnet:')) await addDownload(url);
+      else if (action === 'download' && !url.startsWith('magnet:')) return addDownload(url);
       else throw Error('Неподдерживаемое действие.');
     },
     library: () => data.library,
