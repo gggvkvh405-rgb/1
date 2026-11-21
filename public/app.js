@@ -1,3 +1,4 @@
+import {motionAllowed,syncMotion,play,reveal,revealSection} from './motion.js';
 import {icon as I} from './icons.js';
 import {games,regions,weeklyGames,achievements} from './games.js';
 import {browser} from './browser.js';
@@ -14,9 +15,9 @@ const btn = (label,action,glyph='',classes='')=>`<button type="button" class="bt
 const head = (eyebrow,title,desc,actions='')=>`<div class="page-head"><div><div class="eyebrow"><i></i>${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div>${actions?`<div class="head-actions">${actions}</div>`:''}</div>`;
 const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria-label="${esc(label)}">${items.map(([v,t])=>`<option value="${esc(v)}" ${v===selected?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
 const current = (n)=>n===renderId;
-function toast(text,error=false){const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>x.remove(),4300);}
+function toast(text,error=false){const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
-function showDialog(title,body){if(dialog.open)dialog.close();dialogBody.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${title}</h2><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();}
+function showDialog(title,body){const replacing=dialog.open;if(replacing)dialog.close();dialogBody.innerHTML=`<div class="dialog-head"><h2 id="dialog-title">${title}</h2><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});if(replacing)reveal(dialogBody,'.link-row,.game-source-group','rise',{limit:8});}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
 function sidebar(){
  $('#nav').innerHTML=Object.entries(sections).filter(([id])=>id!=='sources').map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
@@ -25,8 +26,8 @@ function sidebar(){
  $('#profile').innerHTML=`<span class="avatar">${I('user')}</span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>ByAzen</small></span><img class="profile-brand" src="assets/logo.svg" alt="">${I('down','profile-arrow')}`;
  $('#side-games').innerHTML=state.library.length ? [...state.library].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||(b.lastPlayed||'').localeCompare(a.lastPlayed||'')).slice(0,6).map(g=>`<button class="side-game" data-action="edit-game" data-id="${esc(g.id)}" title="${esc(g.title)}">${I('game')}<span>${esc(g.title)}</span></button>`).join('') : `<button class="side-game muted" data-action="new-game" title="Добавить игру">${I('plus')}<span>Добавить игру</span></button>`;
 }
-function go(section){if(!Object.hasOwn(sections,section))return;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();run(render);}
-async function render(){let n=++renderId;content.dataset.section=state.section;return ({home,catalog,library,downloads,rankings,sources,settings}[state.section])(n);}
+function go(section){if(!Object.hasOwn(sections,section))return;const changed=section!==state.section;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();if(changed)reveal($('.sidebar'),'[aria-current=page] svg','pop');run(render);}
+async function render(reason){const n=++renderId, section=state.section;content.dataset.section=section;const result=({home,catalog,library,downloads,rankings,sources,settings}[section])(n);revealSection(content,section,reason);return result;}
 function rangeButtons(result,prefix){const last=Math.max(1,Math.min(500,Math.ceil(result.total/result.pageSize)));return `<div class="pagination"><button class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page} из ${last}</span><button class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;}
 const homeTabs=[['flame','Сейчас популярно'],['calendar','Лучшие игры недели'],['trophy','Игры с достижениями']];
 function home(n){
@@ -78,20 +79,27 @@ async function catalog(n){
  </div><div class="catalog-apply">${btn('Сбросить','reset-filters')}<button type="submit" class="btn primary">${I('search')} Применить</button></div>
  </aside></form>`;
  const form=$('#catalog-form'), results=$('#catalog-results'), sourceBox=$('#catalog-source-options');
- let pageResult, offlineReason='', pageMatches=new Map();
+ let pageResult, offlineReason='', pageMatches=new Map(), shownKeys=null;
  function drawPage(){
   if(!pageResult||!current(n))return;
   const r=pageResult, rows=refinePage(r.games,catalogLocal,pageMatches);
   const refined=catalogLocal.min!==FIRST_YEAR||catalogLocal.max!==LAST_YEAR||catalogLocal.sources.length>0;
   $('#catalog-total').textContent=r.offline?`Локальная подборка: ${r.total.toLocaleString('ru')}`:resultCaption(r.total);
   $('#catalog-hint').textContent=refined?`Показано на этой странице: ${rows.length} из ${r.games.length}`:'Используйте боковую панель для уточнения поиска';
+  const keys=JSON.stringify(rows.map(g=>g.url));
+  const badgesFor=g=>{const names=pageMatches.get(g.title)||[];return names.length?names.map(x=>`<span class="catalog-badge">${esc(x)}</span>`).join(''):'<span class="catalog-badge">Steam</span>';};
+  if(rows.length&&keys===shownKeys){
+   results.querySelectorAll('.catalog-badges').forEach((el,i)=>{const html=badgesFor(rows[i]);if(el.innerHTML!==html)el.innerHTML=html;});
+   return;
+  }
   const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>Steam недоступен. Показана локальная подборка без актуальных цен и наличия. Фильтры платформы, цены, скидок и региона не применяются.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
   const list=rows.length?`<div class="catalog-list">${rows.map(g=>{
-   const sources=pageMatches.get(g.title)||[], meta=catalogMeta(g);
-   const price=g.price||'', badge=sources.length?sources.map(x=>`<span class="catalog-badge">${esc(x)}</span>`).join(''):'<span class="catalog-badge">Steam</span>';
+   const meta=catalogMeta(g), price=g.price||'', badge=badgesFor(g);
    return `<button type="button" class="catalog-row" data-action="catalog-game" data-url="${esc(g.url)}" data-title="${esc(g.title)}" title="Открыть ${esc(g.title)}"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
   }).join('')}</div>`:details('search',refined?'Нет совпадений на этой странице':'Ничего не найдено',refined?'Измените фильтры года и источников или перейдите к другой странице.':'Попробуйте изменить запрос или фильтры.');
   results.setAttribute('aria-busy','false');results.innerHTML=unavailable+list+(r.total>r.pageSize&&!r.offline?rangeButtons(r,'steam'):'');
+  if(keys!==shownKeys)reveal(results,'.catalog-row,.empty','rise',{limit:9,step:22});
+  shownKeys=keys;
  }
  function showYears(){
   const lo=$('[name=minYear]',form), hi=$('[name=maxYear]',form), {min,max}=catalogLocal;
@@ -188,14 +196,29 @@ function downloads(n){
  content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками в одной очереди.',btn('Добавить загрузку','new-download','plus','primary'))}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
  run(()=>refreshDownloads(n));
 }
+let downloadRead=0;
 async function refreshDownloads(n){
- const list=await api.downloads(), target=$('#dl-list');if(!current(n)||!target)return;
- const html=list.length?`<div class="item-list">${list.map(j=>`<article class="list-item dl-item"><span class="list-icon">${I('download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip">${(j.kind==='torrent'&&j.status==='running'&&torrentPhases[j.phase])||statuses[j.status]||esc(j.status)}</span></h3><p>${esc(j.file)}</p><progress max="${j.total||1}" ${j.status==='running'&&j.total==null?'':`value="${j.status==='done'&&!j.total?1:j.bytes||0}"`}></progress><p>${humanBytes(j.bytes)} / ${humanBytes(j.total)}${j.error?' · '+esc(j.error):''}</p></div><div class="item-actions">${[['pause','Пауза',['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],['cancel','Отменить',['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]].filter(x=>x[2].includes(j.status)).map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('download','Очередь пуста',window.byazen?'Добавьте прямую или magnet-ссылку либо выберите игру из источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
+ const request=++downloadRead, list=await api.downloads(), target=$('#dl-list');
+ if(!current(n)||request!==downloadRead||!target)return;
+ const html=list.length?`<div class="item-list">${list.map(j=>`<article class="list-item dl-item" data-state="${esc(j.status)}"><span class="list-icon">${I('download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip">${(j.kind==='torrent'&&j.status==='running'&&torrentPhases[j.phase])||statuses[j.status]||esc(j.status)}</span></h3><p>${esc(j.file)}</p><progress class="sr-only" aria-label="Прогресс загрузки"></progress><div class="motion-meter" aria-hidden="true"><span></span></div><p class="dl-stats"></p></div><div class="item-actions">${[['pause','Пауза',['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],['cancel','Отменить',['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]].filter(x=>x[2].includes(j.status)).map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('download','Очередь пуста',window.byazen?'Добавьте прямую или magnet-ссылку либо выберите игру из источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
  if(target._markup!==html){
   const was=target.contains(document.activeElement)?document.activeElement.dataset:null;
+  const entering=target._markup===undefined;
   target.innerHTML=html;target._markup=html;
+  if(entering)reveal(target,'.dl-item,.empty','slide');
   if(was)Array.from(target.querySelectorAll('button')).find(b=>b.dataset.op===was.op&&b.dataset.id===was.id)?.focus({preventScroll:true});
  }
+ target.querySelectorAll('.dl-item').forEach((row,i)=>{
+  const j=list[i], progress=$('progress',row), meter=$('.motion-meter',row);
+  const total=j.total||1, value=j.status==='done'&&!j.total?1:j.bytes||0;
+  const pending=j.status==='running'&&j.total==null;
+  progress.max=total;
+  if(pending)progress.removeAttribute('value');else progress.value=value;
+  meter.classList.toggle('is-indeterminate',pending);
+  meter.style.setProperty('--fraction',Math.max(0,Math.min(1,value/total)));
+  const stats=$('.dl-stats',row), text=`${humanBytes(j.bytes)} / ${humanBytes(j.total)}${j.error?' · '+j.error:''}`;
+  if(stats.textContent!==text)stats.textContent=text;
+ });
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
@@ -228,7 +251,9 @@ async function refreshSourceList(n){
  const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
  if(target._markup===html)return false;
  const focus=target.contains(document.activeElement)?document.activeElement.dataset:null;
+ const entering=target._markup===undefined;
  target.innerHTML=html;target._markup=html;
+ if(entering)reveal(target,'.item-list > .list-item,.empty','slide');
  if(focus)[...target.querySelectorAll('button')].find(b=>b.dataset.id===focus.id&&b.dataset.op===focus.op)?.focus({preventScroll:true});
  return true;
 }
@@ -239,8 +264,10 @@ async function loadSourceGames(n){
  const result=await api.searchSources(state.srcTerm,state.srcPage);if(!current(n)||task!==sourceRead)return;
  if(state.srcPage>1 && !result.games.length){state.srcPage=1;return loadSourceGames(n);}
  shownSourceGames=result.games;
- $('#source-games').innerHTML=result.games.length?`<div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
- if(!result.games.length && state.srcTerm)$('#source-games').innerHTML=details('search','Ничего не найдено','Проверьте запрос и убедитесь, что нужный источник включён.');
+ let html=result.games.length?`<div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
+ if(!result.games.length && state.srcTerm)html=details('search','Ничего не найдено','Проверьте запрос и убедитесь, что нужный источник включён.');
+ const target=$('#source-games');
+ if(target._markup!==html){target.innerHTML=html;target._markup=html;reveal(target,'.item-list > .list-item,.empty','rise');}
 }
 function showSourcePreview(d){if(!d)return;showDialog('Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>Импортируйте источник, только если доверяете ему.</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="source-import" data-id="${esc(d.id)}">${I('check')} Импортировать</button></div>`);}
 let gameOpenRequest=0;
@@ -296,7 +323,7 @@ const classics=[['dark','Тёмная',263],['light','Светлая',250],['ole
 function themeStyle(el,id,hue,pattern){el.style.setProperty('--hue',hue);el.dataset.pattern=pattern;el.dataset.look=id;}
 function applyTheme(){
  const id=state.settings.theme;document.documentElement.dataset.theme=id;
- document.documentElement.classList.toggle('motion-off',state.settings.motion);
+ document.documentElement.classList.toggle('motion-off',state.settings.motion);syncMotion();
  const k=Number(id.split('-')[1]);
  if(Number.isInteger(k)&&k>=0&&k<100)themeStyle(document.documentElement,id,palettes[Math.floor(k/10)][1],k%10);
  else themeStyle(document.documentElement,id,263,'none');
@@ -316,7 +343,7 @@ function settings(){
 function drawThemes(){
  $('#themes').innerHTML=themesMarkup();
  $('#themes').querySelectorAll('.theme-card').forEach(el=>themeStyle(el,el.dataset.themeId,el.dataset.hue,el.dataset.pattern));
- $('#theme-page').onchange=e=>{state.themePage=Number(e.target.value);drawThemes();$('#theme-page').focus();};
+ $('#theme-page').onchange=e=>{state.themePage=Number(e.target.value);drawThemes();reveal($('#themes'),'.theme-grid:not(.classic-grid) .theme-card','pop');$('#theme-page').focus();};
 }
 function urlDialog(title,desc,callback){
  showDialog(title,`<p class="muted">${desc}</p><form id="url-form"><label class="field"><span>URL</span><input type="url" name="url" placeholder="https://…" required maxlength="4096"></label><div class="dialog-actions"><button class="btn primary" type="submit">${I('arrow')} Продолжить</button></div></form>`);
@@ -326,14 +353,14 @@ function confirmDialog(title,desc,callback){
  showDialog(title,`<p class="muted">${desc}</p><div class="dialog-actions">${btn('Отмена','close')}<button class="btn danger" id="confirm-action">Подтвердить</button></div>`);
  $('#confirm-action').onclick=()=>run(async()=>{await callback();dialog.close();});
 }
-function selectHero(k){state.featured=k;run(async()=>{await render();if(!state.settings.motion&&!matchMedia('(prefers-reduced-motion: reduce)').matches)$('.hero-copy')?.animate([{opacity:.75,translate:'0 3px'},{opacity:1,translate:'0 0'}],{duration:200,easing:'ease-out'});});}
+function selectHero(k){state.featured=k;run(()=>render('hero'));}
 function dispatch(b){
  const d=b.dataset, a=d.action, g=state.library.find(g=>g.id===d.id);
  if(d.go)return go(d.go);
  if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a))return openCatalogGame(games.find(x=>x.id===Number(a.split('-')[1])));
  switch(a){
   case 'close':dialog.close();break;
-  case 'home-tab':state.tab=Number(d.tab);return render();
+  case 'home-tab':state.tab=Number(d.tab);return render('home-tab');
   case 'surprise':selectHero((state.featured+1+Math.floor(Math.random()*(games.length-1)))%games.length);$('.hero')?.scrollIntoView({block:'nearest'});break;
   case 'steam-url':return api.openSteam(d.url);
   case 'catalog-game':return openCatalogGame({title:d.title,url:d.url});
@@ -341,7 +368,7 @@ function dispatch(b){
   case 'review-catalog':state.filter={term:'',page:1,category1:'998',sort_by:'Reviews_DESC'};return go('catalog');
   case 'feedback':return showDialog('Обратная связь',`<p class="muted">Сообщите об ошибке или предложите улучшение. Откроется форма GitHub — ByAzen ничего не отправляет автоматически.</p><div class="dialog-actions">${btn('Открыть форму','feedback-open','external','primary')}</div>`);
   case 'feedback-open':return api.openProjectFeedback();
-  case 'catalog-toggle':catalogLocal.mobileOpen=!catalogLocal.mobileOpen;$('#catalog-form').classList.toggle('filters-open',catalogLocal.mobileOpen);b.setAttribute('aria-expanded',String(catalogLocal.mobileOpen));break;
+  case 'catalog-toggle':catalogLocal.mobileOpen=!catalogLocal.mobileOpen;$('#catalog-form').classList.toggle('filters-open',catalogLocal.mobileOpen);b.setAttribute('aria-expanded',String(catalogLocal.mobileOpen));if(catalogLocal.mobileOpen)reveal(content,'.catalog-filters','slide');break;
   case 'reset-filters':state.filter={term:'',page:1};Object.assign(catalogLocal,{min:FIRST_YEAR,max:LAST_YEAR,sources:[]});window.scrollTo(0,0);return render();
   case 'rerender':return render();
   case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
@@ -362,7 +389,7 @@ function dispatch(b){
   case 'source-import':return api.importSource(d.id).then(()=>{dialog.close();toast('Источник импортирован.');return render();});
   case 'source-op':if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':return sourceLinkDialog(shownSourceGames[Number(d.index)]);
-  case 'theme':return api.saveSettings({...state.settings,theme:d.themeId}).then(x=>{state.settings=x;applyTheme();if(state.section==='settings'){drawThemes();$(`[data-theme-id="${d.themeId}"]`)?.focus({preventScroll:true});}toast('Тема применена.');});
+  case 'theme':return api.saveSettings({...state.settings,theme:d.themeId}).then(x=>{state.settings=x;applyTheme();if(state.section==='settings'){drawThemes();const selected=$('.theme-selected');selected?.focus({preventScroll:true});play(selected,[{scale:'.96'},{scale:'1.026',offset:.58},{scale:'1'}],{duration:360});}toast('Тема применена.');});
  }
 }
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-action],button[data-go]');if(b&&!b.disabled)run(()=>dispatch(b));});
@@ -371,4 +398,4 @@ $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('s
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-sidebar(); run(render); run(async()=>{state.settings=await api.settings();state.library=await api.library();if(state.settings.theme.startsWith('theme-'))state.themePage=Math.floor(Number(state.settings.theme.slice(6))/10);applyTheme();sidebar();if(state.section!=='home')return render();});
+run(async()=>{try{state.settings=await api.settings();if(state.settings.theme.startsWith('theme-'))state.themePage=Math.floor(Number(state.settings.theme.slice(6))/10);applyTheme();state.library=await api.library();}finally{sidebar();await render();}});

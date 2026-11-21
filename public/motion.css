@@ -1,0 +1,68 @@
+/* Motion is progressive enhancement: no animation is required to reach or use controls. */
+:root { --motion-fast: 170ms; --motion-mid: 285ms; --motion-ease: cubic-bezier(.2,.75,.24,1); }
+.motion-meter { position:relative; width:min(340px,100%); height:8px; margin-top:6px; border-radius:999px; overflow:hidden; background:var(--line); }
+.motion-meter > span { display:block; height:100%; border-radius:inherit; background:var(--accent-fill); transform:scaleX(var(--fraction,0)); transform-origin:left; }
+.motion-meter.is-indeterminate > span { width:38%; transform:translateX(75%); }
+
+@media (prefers-reduced-motion: no-preference) {
+ html:not(.motion-off) {
+  --surface-motion: background-color var(--motion-mid), border-color var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-mid);
+ }
+ html:not(.motion-off) :is(.stage,.sidebar,dialog,.pane,.list-item,.btn,.game-card,.catalog-row,.theme-card,.quick-button,.nav-link,.tab,input,select,textarea) {
+  transition:var(--surface-motion), scale var(--motion-fast) var(--motion-ease), translate var(--motion-mid) var(--motion-ease);
+ }
+ html:not(.motion-off) :is(.avatar,.nav-link svg,.quick-button svg,.side-game svg,.tab-glyph,.catalog-row-art img,.card-art img,.card-copy,.theme-preview i,.list-icon,.empty-icon,.game-source-entry svg:last-child,.page-head .eyebrow i) {
+  transition: transform var(--motion-mid) var(--motion-ease), color var(--motion-fast), opacity var(--motion-fast), scale var(--motion-mid) var(--motion-ease);
+ }
+ html:not(.motion-off) :is(.btn,.quick-button,.nav-link,.tab,.theme-card,.game-card,.catalog-row):active:not(:disabled) { scale:.978; }
+ html:not(.motion-off) :is(input:not([type=range]):not([type=checkbox]),textarea,select):focus-visible { box-shadow:0 0 0 3px var(--accent-bg); }
+ html:not(.motion-off) .toggle input:checked { animation:check-in 260ms var(--motion-ease); }
+ html:not(.motion-off) :is(.catalog-facet,.game-source-group) summary svg { transition:transform var(--motion-mid) var(--motion-ease); }
+ html:not(.motion-off) :is(.catalog-facet[open] > .catalog-facet-body,.game-source-group[open] > .game-source-entries) { animation:detail-in 250ms var(--motion-ease); }
+ html:not(.motion-off) .catalog-results[aria-busy=true] .empty-icon { animation:loading-breathe 1.25s ease-in-out 4; }
+ html:not(.motion-off) .motion-meter.is-indeterminate > span { animation:meter-slide 1.45s ease-in-out 3; }
+ html:not(.motion-off) .dl-item[data-state=running] .list-icon svg { animation:loading-breathe 1.3s ease-in-out 3; }
+ html:not(.motion-off) .hero-image { transition:scale 600ms var(--motion-ease); }
+ html:not(.motion-off) .toast { transition:opacity 190ms ease, translate 190ms var(--motion-ease); animation:toast-in 330ms var(--motion-ease); }
+ html:not(.motion-off) .toast.is-leaving { opacity:0; translate:10px 0; }
+ html:not(.motion-off) .toast svg { animation:check-in 420ms var(--motion-ease); }
+ html:not(.motion-off) dialog {
+  animation:none; opacity:0; translate:0 10px; scale:.98;
+  transition:opacity 170ms ease,translate 260ms var(--motion-ease),scale 260ms var(--motion-ease),display 260ms allow-discrete,overlay 260ms allow-discrete;
+ }
+ html:not(.motion-off) dialog:not([open]), html:not(.motion-off) dialog:not([open])::backdrop { pointer-events:none; }
+ html:not(.motion-off) dialog[open] { opacity:1; translate:0 0; scale:1; }
+ html:not(.motion-off) dialog::backdrop { opacity:0; transition:opacity 260ms ease,display 260ms allow-discrete,overlay 260ms allow-discrete; }
+ html:not(.motion-off) dialog[open]::backdrop { opacity:1; }
+ @starting-style {
+  html:not(.motion-off) dialog[open] { opacity:0; translate:0 12px; scale:.975; }
+  html:not(.motion-off) dialog[open]::backdrop { opacity:0; }
+ }
+}
+@media (hover:hover) and (prefers-reduced-motion:no-preference) {
+ html:not(.motion-off) :is(.nav-link,.side-game,.quick-button):hover svg { transform:translateX(2px) scale(1.12); color:var(--accent); }
+ html:not(.motion-off) .profile:hover .avatar { transform:rotate(-6deg) scale(1.08); }
+ html:not(.motion-off) .hero:has(.hero-link:hover) .hero-image { scale:1.035; }
+ html:not(.motion-off) .game-card:hover { translate:0 -3px; box-shadow:0 10px 25px #0005; }
+ html:not(.motion-off) .game-card:hover .card-copy { transform:translateY(-2px); }
+ html:not(.motion-off) .catalog-row:hover .catalog-row-art img { transform:scale(1.065); }
+ html:not(.motion-off) .catalog-row:hover { box-shadow:inset 0 0 0 1px var(--accent-bg); }
+ html:not(.motion-off) :is(.tab,.btn):hover:not(:disabled) > svg { animation:icon-nudge 320ms var(--motion-ease); }
+ html:not(.motion-off) .theme-card:hover { translate:0 -2px; box-shadow:0 6px 18px #0004; }
+ html:not(.motion-off) .theme-card:hover .theme-preview i { transform:translateY(-4px); }
+ html:not(.motion-off) .theme-card:hover .theme-preview i:nth-child(2) { transition-delay:38ms; transform:translateY(-7px); }
+ html:not(.motion-off) .theme-card:hover .theme-preview i:nth-child(3) { transition-delay:76ms; }
+ html:not(.motion-off) .list-item:hover .list-icon { transform:rotate(-5deg) scale(1.06); }
+ html:not(.motion-off) .game-source-entry:hover svg:last-child { transform:translateX(3px); }
+}
+@keyframes check-in { 0%{scale:.8} 56%{scale:1.12} 100%{scale:1} }
+@keyframes detail-in { from{opacity:.45;translate:0 -4px} to{opacity:1;translate:0 0} }
+@keyframes loading-breathe { 50%{scale:1.13;opacity:.62} }
+@keyframes meter-slide { from{transform:translateX(-95%)} to{transform:translateX(265%)} }
+@keyframes toast-in { from{opacity:0;translate:18px 0} to{opacity:1;translate:0 0} }
+@keyframes icon-nudge { 50%{transform:translateY(-2px) scale(1.14)} }
+@media (prefers-reduced-motion:no-preference) {
+ html:not(.motion-off) .motion-meter:not(.is-indeterminate) > span { transition:transform 380ms var(--motion-ease); }
+}
+/* Keep the accessible progress element without applying the legacy visible bar dimensions. */
+.dl-item progress.sr-only { width:1px; height:1px; margin:0; }
