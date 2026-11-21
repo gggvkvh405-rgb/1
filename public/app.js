@@ -9,7 +9,7 @@ const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,themePage:0};
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themePage:0};
 let renderId=0;
 const details = (icon,title,desc,action='')=>`<div class="empty"><span class="empty-icon">${I(icon)}</span><h3>${esc(title)}</h3><p>${esc(desc)}</p>${action}</div>`;
 const btn = (label,action,glyph='',classes='')=>`<button type="button" class="btn ${classes}" data-action="${action}">${glyph?I(glyph):''}${label}</button>`;
@@ -29,7 +29,12 @@ function sidebar(){
 }
 function go(section){if(!Object.hasOwn(sections,section))return;const changed=section!==state.section;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();if(changed)reveal($('.sidebar'),'[aria-current=page] svg','pop');run(render);}
 async function render(reason){const n=++renderId, section=state.section;content.dataset.section=section;const result=({home,catalog,library,downloads,rankings,sources,settings}[section])(n);revealSection(content,section,reason);return result;}
-function rangeButtons(result,prefix){const last=Math.max(1,Math.min(500,Math.ceil(result.total/result.pageSize)));return `<div class="pagination"><button class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page} из ${last}</span><button class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;}
+function rangeButtons(result,prefix){
+ const rawLast=Math.ceil(result.total/result.pageSize);
+ const last=Math.max(1,prefix==='steam'?Math.min(500,rawLast):rawLast);
+ return `<div class="pagination"><button class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page.toLocaleString('ru')} из ${last.toLocaleString('ru')}</span><button class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;
+}
+
 const homeTabs=[['flame','Сейчас популярно'],['calendar','Лучшие игры недели'],['trophy','Игры с достижениями']];
 function home(n){
  const f=games[state.featured], cyber=state.featured===0;
@@ -67,7 +72,7 @@ async function catalog(n){
  const f=state.filter, term=f.term?.trim()||'', selected=String(f.tags||'').split(',').filter(Boolean);
  const liveFields=properties.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||'',label)}</label>`).join('');
  content.innerHTML=`<form id="catalog-form" class="catalog-layout ${catalogLocal.mobileOpen?'filters-open':''}">
- <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p></div>
+ <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p>${!term?btn('Все игры из источников','browse-sources','layers','catalog-browse-sources'):''}</div>
  <div class="catalog-sort"><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
  <div class="catalog-result-stack">${term?`<section id="catalog-feed-results" class="catalog-feed-results" aria-labelledby="catalog-feed-title"><div class="catalog-feed-header"><h2 id="catalog-feed-title">${I('layers')} В подключённых источниках</h2>${btn('Искать в источниках','search-sources','arrow')}</div><div class="catalog-feed-summary" role="status">Ищем по загруженным спискам…</div><div class="catalog-feed-items"></div></section>`:''}${term?`<h2 class="catalog-steam-title">${I('steam')} Результаты Steam</h2>`:''}<section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section></div>
  <aside id="catalog-filters" class="catalog-filters" aria-label="Фильтры каталога"><div class="catalog-filter-scroll">
@@ -243,7 +248,7 @@ async function refreshDownloads(n){
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
- content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div></div><div id="sources-list"></div>`;
+ content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}</form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div></div><div id="sources-list"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
  form.onsubmit=async e=>{
   e.preventDefault();
@@ -254,7 +259,9 @@ async function sources(n){
   catch(e){if(current(n)){status.classList.add('is-error'); status.textContent=e.message;}}
   finally{submit.disabled=false;}
  };
- $('#source-search').onsubmit=e=>{e.preventDefault();state.srcTerm=new FormData(e.currentTarget).get('term');state.srcPage=1;run(()=>loadSourceGames(n));};
+ const search=$('#source-search');
+ search.onsubmit=e=>{e.preventDefault();const data=new FormData(search);state.srcTerm=String(data.get('term')||'').trim();state.srcId=String(data.get('sourceId')||'');state.srcPage=1;run(()=>loadSourceGames(n));};
+ $('[name=sourceId]',search).onchange=()=>search.requestSubmit();
  await refreshSourceList(n);
  await loadSourceGames(n);
 }
@@ -269,6 +276,9 @@ async function refreshSourceList(n){
  const request=++sourceListRequest;
  const list=await api.sources();if(!current(n)||request!==sourceListRequest)return false;
  const target=$('#sources-list');if(!target)return false;
+ const select=$('#source-search [name=sourceId]');
+ const opts='<option value="">Все включённые источники</option>'+list.filter(s=>s.enabled).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+ if(select&&select._markup!==opts){select.innerHTML=opts;select._markup=opts;select.value=state.srcId;if(select.value!==state.srcId){state.srcId='';select.value='';state.srcPage=1;}}
  const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
  if(target._markup===html)return false;
  const focus=target.contains(document.activeElement)?document.activeElement.dataset:null;
@@ -282,17 +292,24 @@ setInterval(()=>{if(window.byazen&&state.section==='sources'){const n=renderId;r
 let sourceRead=0, shownSourceGames=[];
 async function loadSourceGames(n){
  const task=++sourceRead;
- const result=await api.searchSources(state.srcTerm,state.srcPage);if(!current(n)||task!==sourceRead)return;
- if(state.srcPage>1 && !result.games.length){state.srcPage=1;return loadSourceGames(n);}
+ const result=await api.searchSources(state.srcTerm,state.srcPage,state.srcId);if(!current(n)||task!==sourceRead)return;
+ state.srcPage=result.page;
  shownSourceGames=result.games;
- let html=result.games.length?`<div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
- if(!result.games.length && state.srcTerm)html=details('search','Ничего не найдено','Попробуйте часть названия или оригинальное название. Проверьте, что нужный источник включён и его список загрузился.');
+ const last=Math.max(1,Math.ceil(result.total/result.pageSize));
+ const pager=last>1?`<form class="source-jump" aria-label="Переход к странице"><label>Страница <input type="number" name="page" min="1" max="${last}" value="${result.page}" required></label><button class="btn" type="submit">Перейти</button></form>`:'';
+ let html=result.games.length?`<div class="source-results-overview"><p>Доступно записей: ${result.total.toLocaleString('ru')}</p>${pager}</div><div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
+ if(!result.games.length)html=state.srcTerm?details('search','Ничего не найдено','Попробуйте часть названия или оригинальное название. Проверьте, что нужный источник включён и его список загрузился.',btn('Показать все игры','browse-sources','layers')):details('layers','Пока нет загруженных записей','Статус загрузки каждого списка указан ниже.');
  const target=$('#source-games');
  if(target._markup!==html){target.innerHTML=html;target._markup=html;reveal(target,'.item-list > .list-item,.empty','rise');}
+ const jump=$('.source-jump',target);if(jump)jump.onsubmit=e=>{e.preventDefault();run(()=>switchSourcePage(Number(new FormData(jump).get('page'))));};
+}
+async function switchSourcePage(page){
+ const n=renderId;state.srcPage=page;await loadSourceGames(n);
+ if(current(n))$('#source-search-heading')?.scrollIntoView({block:'start'});
 }
 function showSourcePreview(d){if(!d)return;showDialog('Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>Импортируйте источник, только если доверяете ему.</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="source-import" data-id="${esc(d.id)}">${I('check')} Импортировать</button></div>`);}
 function searchInSources(term){
- state.srcTerm=String(term??'').trim().slice(0,200);state.srcPage=1;
+ state.srcTerm=String(term??'').trim().slice(0,200);state.srcPage=1;state.srcId='';
  go('sources');
  queueMicrotask(()=>{const input=$('#source-search input');input?.focus({preventScroll:true});$('#source-search-heading')?.scrollIntoView({block:'start'});});
 }
@@ -357,7 +374,8 @@ function dispatch(b){
   case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
   case 'search-sources':return searchInSources(state.filter.term);
   case 'catalog-feed-game':{const game=catalogFeedGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
-  case 'source-page':state.srcPage=Number(d.page);return loadSourceGames(renderId);
+  case 'browse-sources':return searchInSources('');
+  case 'source-page':return switchSourcePage(Number(d.page));
   case 'library-tab':state.libraryFilter=d.tab;return render();
   case 'new-game':return editGame();
   case 'edit-game':if(g)return editGame(g);break;

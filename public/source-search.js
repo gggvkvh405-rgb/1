@@ -95,31 +95,72 @@ export function availability(sources,titles){
   }).map(s=>s.name))]};
  });
 }
+const ruKeys='йцукенгшщзхъфывапролджэячсмитьбюё', enKeys="qwertyuiop[]asdfghjkl;'zxcvbnm,.`";
+function otherKeyboard(text){
+ const value=normalize(text);
+ if(/^[a-z\[\];'`. ,0-9-]+$/.test(value))return [...value].map(c=>ruKeys[enKeys.indexOf(c)]??c).join('');
+ if(/^[а-яё .0-9-]+$/u.test(value))return [...value].map(c=>enKeys[ruKeys.indexOf(c)]??c).join('');
+ return '';
+}
+function prepareQuery(raw){
+ const query=titleInfo(raw);
+ query.tokens=query.terms.map(word=>({word,numeric:/^\d+$/.test(word)}));
+ query.joined=query.exact.length>=3&&!/\d$/.test(query.exact);
+ return query;
+}
 function searchScore(doc,query){
- if(!query.terms.length)return 0;
  if(doc.exact===query.exact)return 0;
- if(doc.aliases.some(k=>query.aliases.includes(k)||query.exact===k))return 1;
- const allTerms=query.terms.every(t=>doc.terms.some(w=>/^\d+$/.test(t)?w===t:w.startsWith(t)));
- const joined=doc.exact.includes(query.exact)&&query.exact.length>=3&&!/\d$/.test(query.exact);
+ if(doc.aliases.some(key=>query.aliases.includes(key)||query.exact===key))return 1;
+ const allTerms=query.tokens.every(({word,numeric})=>doc.terms.some(token=>numeric?token===word:token.startsWith(word)));
+ const joined=query.joined&&doc.exact.includes(query.exact);
  return allTerms||joined?2:-1;
 }
-export function searchSources(sources,query='',page=1){
- query=titleInfo(typeof query==='string'?query.slice(0,200):'');
- page=Number.isSafeInteger(page)&&page>=1&&page<=10000?page:1;
- const limit=16, offset=(page-1)*limit, buckets=[[],[],[]], counts=[0,0,0];
- for(const s of sources)if(s.enabled)for(const doc of indexFor(s.games).docs){
-  const rank=searchScore(doc,query);
-  if(rank<0)continue;
-  if(counts[rank]++<offset+limit)buckets[rank].push([s,doc.i]);
- }
- const games=[];
- let skip=offset;
- for(let rank=0;rank<buckets.length&&games.length<limit;rank++){
-  if(skip>=counts[rank]){skip-=counts[rank];continue;}
-  for(const [s,index] of buckets[rank].slice(skip,skip+limit-games.length)){
-   const {title,size,date,links}=s.games[index];games.push({title,size,date,links,source:s.name,id:s.id,index});
+function gameRow(source,index){
+ const {title,size,date,links}=source.games[index];
+ return {title,size,date,links,source:source.name,id:source.id,index};
+}
+export function searchSources(sources,query='',page=1,sourceId=''){
+ const raw=typeof query==='string'?query.slice(0,200).trim():'';
+ const requested=Number.isSafeInteger(page)&&page>=1?page:1, limit=16;
+ const active=sources.filter(s=>s.enabled&&(!sourceId||s.id===sourceId));
+ const main=prepareQuery(raw), keyboard=otherKeyboard(raw), alternate=keyboard?prepareQuery(keyboard):null;
+ // Browsing all entries does not depend on Steam and does not build a massive array of preceding pages.
+ if(!main.exact){
+  const feeds=active.map(s=>[s,indexFor(s.games).docs]);
+  const total=feeds.reduce((sum,[,docs])=>sum+docs.length,0);
+  page=Math.min(requested,Math.max(1,Math.ceil(total/limit)));
+  let offset=(page-1)*limit;const games=[];
+  for(const [s,docs] of feeds){
+   if(offset>=docs.length){offset-=docs.length;continue;}
+   for(const {i} of docs.slice(offset,offset+limit-games.length))games.push(gameRow(s,i));
+   offset=0;if(games.length===limit)break;
   }
-  skip=0;
+  return {games,total,page,pageSize:limit};
  }
- return {games,total:counts.reduce((a,b)=>a+b,0),page,pageSize:limit};
+ const rankOf=doc=>{
+  const rank=searchScore(doc,main);
+  if(rank>=0)return rank;
+  return alternate?.tokens.some(t=>!t.numeric)&&searchScore(doc,alternate)>=0?3:-1;
+ };
+ const counts=[0,0,0,0], first=[[],[],[],[]];
+ for(const s of active)for(const doc of indexFor(s.games).docs){
+  const rank=rankOf(doc);
+  if(rank>=0&&counts[rank]++<limit)first[rank].push([s,doc.i]);
+ }
+ const total=counts.reduce((a,b)=>a+b,0);
+ page=Math.min(requested,Math.max(1,Math.ceil(total/limit)));
+ if(page===1)return {games:first.flat().slice(0,limit).map(([s,i])=>gameRow(s,i)),total,page,pageSize:limit};
+ const start=(page-1)*limit;
+ let before=0;
+ const bounds=counts.map(count=>{const a=Math.max(0,start-before), b=Math.min(count,start+limit-before);before+=count;return [a,b];});
+ const seen=[0,0,0,0], found=[[],[],[],[]];let remaining=Math.min(limit,total-start);
+ for(const s of active){
+  for(const doc of indexFor(s.games).docs){
+   const rank=rankOf(doc);if(rank<0)continue;
+   const i=seen[rank]++, [a,b]=bounds[rank];
+   if(i>=a&&i<b){found[rank].push(gameRow(s,doc.i));remaining--;if(!remaining)break;}
+  }
+  if(!remaining)break;
+ }
+ return {games:found.flat(),total,page,pageSize:limit};
 }

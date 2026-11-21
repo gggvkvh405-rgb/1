@@ -60,3 +60,24 @@ test('advertising suffixes and multiplayer build labels in a Hydra feed do not h
   assert.deepEqual(sourceMatches(source,query)[0].entries.map(e=>e.index),[index]);
  }
 });
+
+test('all enabled source records can be browsed beyond page 500 and 10000',()=>{
+ const {searchSources}=require('../core/state.cjs');
+ const list=Array.from({length:9000},(_,i)=>game(`Fixture game ${i}`));
+ const sources=Array.from({length:18},(_,i)=>group(String(i),`Feed ${i}`,true,list));
+ sources.push(group('disabled','Disabled',false,[game('Invisible')]));
+ const page=searchSources(sources,'',10001);
+ assert.equal(page.total,162000);assert.equal(page.page,10001);assert.equal(page.games.length,16);
+ assert.equal(page.games[0].id,'17');assert.equal(page.games[0].index,7000);
+ const filtered=searchSources(sources,'',9999,'1');
+ assert.equal(filtered.total,9000);assert.equal(filtered.page,563);assert.equal(filtered.games.at(-1).index,8999);
+ assert.equal(searchSources(sources,'',1,'disabled').total,0);
+});
+
+test('wrong keyboard layout only expands manual search and preserves exact matches',()=>{
+ const {searchSources}=require('../core/state.cjs');
+ const sources=[group('a','Feed',true,[game('Metro 2033'),game('Metro 20330'),game('Сталкер')])];
+ assert.deepEqual(searchSources(sources,'ьуекщ 2033').games.map(g=>g.title),['Metro 2033']);
+ assert.deepEqual(searchSources(sources,'cnfkrth').games.map(g=>g.title),['Сталкер']);
+ assert.deepEqual(sourceMatches(sources,'ьуекщ 2033'),[]);
+});

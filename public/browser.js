@@ -43,7 +43,7 @@ export const browser = {
  importSource:async id=>{if(store.sources.length>=20)throw Error('Можно добавить до 20 источников.'); if(!drafts.has(id))throw Error('Откройте предпросмотр повторно.');store.sources.push({...drafts.get(id),id:crypto.randomUUID(),enabled:true,updated:new Date().toISOString()});save();drafts.delete(id);},
  sources:async()=>store.sources.map(({games,...r})=>({...r,count:games.length})),
  sourceAction:async(id,op)=>{const s=store.sources.find(x=>x.id===id);if(op==='toggle')s.enabled=!s.enabled;else if(op==='remove')store.sources=store.sources.filter(s=>s.id!==id);else if(s.kind==='url')Object.assign(s,await api('source',await fetchSource(s.url)),{updated:new Date().toISOString()});else throw Error('Для обновления файла удалите запись и импортируйте файл повторно, либо используйте настольное приложение.');save();},
- searchSources:async (q,page)=>searchSources(store.sources,q,page),
+ searchSources:async (q,page,id)=>searchSources(store.sources,q,page,id),
  availability:async titles=>availability(store.sources,titles),
  sourceMatches:async title=>sourceMatches(store.sources,title),
  sourceGame:async(id,index,title)=>{
