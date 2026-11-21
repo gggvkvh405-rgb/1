@@ -5,6 +5,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {request, webURL} = require('./net.cjs');
+const {torrentDownload,magnetV1}=require('./torrent.cjs');
 
 function length(value) { const n = Number(value); return /^\d+$/.test(value || '') && Number.isSafeInteger(n) ? n : null; }
 function rangeInfo(status, headers, offset) {
@@ -23,10 +24,11 @@ function nameFromURL(raw) {
   return !base || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(base) ? 'download' : base;
 }
 class DownloadQueue {
-  constructor(items, persist, {fetch = request} = {}) {
+  constructor(items, persist, {fetch = request, torrent = torrentDownload} = {}) {
     this.items = items;
     this.persist = persist;
     this.fetch = fetch;
+    this.torrent = torrent;
     this.active = null;
     for (const j of items) if (['queued','running','pausing','canceling'].includes(j.status)) j.status = 'paused';
   }
@@ -39,6 +41,17 @@ class DownloadQueue {
     this.items.unshift({id, url, file, title:path.basename(file), partial:path.join(path.dirname(file), `.byazen-${id}.part`), status:'queued', bytes:0, total:null, validator:'', error:''});
     this.persist(); this.pump();
   }
+  addTorrent(url,parent,label){
+    magnetV1(url);
+    if(this.items.length>=200)throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
+    const id=randomUUID();
+    let title=String(label||'Torrent').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').trim().replace(/[. ]+$/,'').slice(0,90)||'Torrent';
+    if(/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(title))title='Torrent '+title;
+    const folder=path.join(parent,`${title} (${id.slice(0,8)})`);
+    this.items.unshift({id,url,file:folder,title,kind:'torrent',partial:path.join(parent,`.byazen-${id}.part`),status:'queued',bytes:0,total:null,error:''});
+    this.persist();this.pump();
+  }
+  clearPartial(job){return fsp.rm(job.partial,{force:true,recursive:job.kind==='torrent'});}
   async action(id, op) {
     const j = this.items.find(x => x.id === id);
     if (!j) throw Error('Загрузка не найдена.');
@@ -47,9 +60,9 @@ class DownloadQueue {
       j.status = op === 'pause' ? 'pausing' : 'canceling';
       this.active.controller.abort();
     } else if (op === 'pause' && j.status === 'queued') j.status = 'paused';
-    else if (op === 'cancel' && ['queued','paused','error'].includes(j.status)) { await fsp.rm(j.partial,{force:true}); j.status = 'canceled'; j.bytes = 0; }
+    else if (op === 'cancel' && ['queued','paused','error'].includes(j.status)) { await this.clearPartial(j); j.status = 'canceled'; j.bytes = 0; }
     else if (op === 'resume' && ['paused','error','canceled'].includes(j.status)) { j.error = ''; j.status = 'queued'; }
-    else if (op === 'remove' && ['done','canceled','error','paused'].includes(j.status)) { await fsp.rm(j.partial,{force:true}); this.items.splice(this.items.indexOf(j),1); }
+    else if (op === 'remove' && ['done','canceled','error','paused'].includes(j.status)) { await this.clearPartial(j); this.items.splice(this.items.indexOf(j),1); }
     else throw Error('Действие сейчас недоступно.');
     this.persist(); this.pump();
   }
@@ -60,8 +73,9 @@ class DownloadQueue {
     const controller = new AbortController();
     this.active = {job:j,controller};
     j.status = 'running'; this.persist();
-    this.run(j, controller.signal).then(() => {j.status = 'done';}, async err => {
-      if (j.status === 'canceling') { await fsp.rm(j.partial,{force:true}); j.status = 'canceled'; j.bytes = 0; }
+    const perform=j.kind==='torrent'?this.torrent(j,controller.signal,this.persist):this.run(j,controller.signal);
+    perform.then(() => {j.status = 'done';}, async err => {
+      if (j.status === 'canceling') { await this.clearPartial(j); j.status = 'canceled'; j.bytes = 0; }
       else if (j.status === 'pausing') j.status = 'paused';
       else throw err;
     }).catch(err => {j.status = 'error'; j.error = err.message;}).finally(() => {

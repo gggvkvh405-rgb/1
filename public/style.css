@@ -19,3 +19,11 @@ main{padding:23px clamp(16px,2.25vw,36px) 38px;max-width:1680px;margin:0 auto;ou
 .source-import-pane p{margin-top:8px}
 .source-url-status:empty{display:none}
 .source-url-status.is-error{color:var(--danger)}
+.game-source-groups{display:grid;gap:8px;margin-top:12px}
+.game-source-group{background:var(--bar);border:1px solid var(--line);border-radius:var(--radius-md);overflow:hidden}
+.game-source-group summary{display:flex;gap:8px;align-items:center;cursor:pointer;padding:10px 12px;overflow-wrap:anywhere}
+.game-source-group summary .chip{margin-left:auto}
+.game-source-group summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.game-source-entries{display:grid;gap:5px;padding:0 8px 8px}
+.game-source-entry{white-space:normal;text-align:left;overflow-wrap:anywhere;justify-content:space-between}
+.game-source-entry small{display:block;color:var(--muted);font-size:var(--ui-small);font-weight:500}

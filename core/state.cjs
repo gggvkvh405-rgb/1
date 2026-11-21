@@ -39,4 +39,28 @@ function availability(sources, titles) {
   }
   return [...requested.values()];
 }
-module.exports = {defaults,updateSettings,readState,saveState,searchSources,availability,sourcesSummary};
+const MATCHES_PER_SOURCE = 20;
+function sourceMatches(sources,title) {
+  if (typeof title !== 'string' || title.length>200) return [];
+  const key=gameKey(title);
+  if (!key) return [];
+  const grouped=[];
+  for (const {id,name,enabled,games} of sources) {
+    if (!enabled) continue;
+    const entries=[]; let count=0;
+    for (const [index,game] of games.entries()) {
+      if (gameKey(game.title)!==key || !game.links.length) continue;
+      count++;
+      if (entries.length<MATCHES_PER_SOURCE) entries.push({index,title:game.title,size:game.size,date:game.date,linkCount:game.links.length});
+    }
+    if (count) grouped.push({id,name,entries,count});
+  }
+  return grouped;
+}
+function readSourceGame(sources,id,index,title) {
+  const src=sources.find(s=>s.enabled&&s.id===id);
+  const game=Number.isSafeInteger(index)&&index>=0?src?.games[index]:null;
+  if (!game || game.title!==title || !game.links.length) throw Error('Источник изменился или отключён. Откройте игру повторно.');
+  return {...game,source:src.name,id:src.id,index};
+}
+module.exports = {defaults,updateSettings,readState,saveState,searchSources,availability,sourcesSummary,sourceMatches,readSourceGame};

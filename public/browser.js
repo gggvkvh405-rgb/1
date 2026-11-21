@@ -45,5 +45,19 @@ export const browser = {
  sourceAction:async(id,op)=>{const s=store.sources.find(x=>x.id===id);if(op==='toggle')s.enabled=!s.enabled;else if(op==='remove')store.sources=store.sources.filter(s=>s.id!==id);else if(s.kind==='url')Object.assign(s,await api('source',await fetchSource(s.url)),{updated:new Date().toISOString()});else throw Error('Для обновления файла удалите запись и импортируйте файл повторно, либо используйте настольное приложение.');save();},
  searchSources:async(q='',page=1)=>{ const games=store.sources.filter(s=>s.enabled).flatMap(s=>s.games.map((g,index)=>({...g,source:s.name,id:s.id,index}))).filter(g=>g.title.toLowerCase().includes(q.toLowerCase().trim()));return {games:games.slice((page-1)*16,page*16),total:games.length,page,pageSize:16};},
  availability:async titles=>titles.map(title=>({title,sources:store.sources.filter(s=>s.enabled&&s.games.some(g=>key(g.title)===key(title))).map(s=>s.name)})),
+ sourceMatches:async title=>{
+  const k=typeof title==='string'&&title.length<=200?key(title):'';
+  if(!k)return [];
+  return store.sources.filter(s=>s.enabled).flatMap(s=>{
+   const entries=[];let count=0;
+   s.games.forEach((g,index)=>{if(key(g.title)===k&&g.links.length){count++;if(entries.length<20)entries.push({index,title:g.title,size:g.size,date:g.date,linkCount:g.links.length});}});
+   return count?[{id:s.id,name:s.name,entries,count}]:[];
+  });
+ },
+ sourceGame:async(id,index,title)=>{
+  const s=store.sources.find(x=>x.enabled&&x.id===id), g=Number.isSafeInteger(index)&&index>=0?s?.games[index]:null;
+  if(!g||g.title!==title||!g.links.length)throw Error('Источник изменился или отключён. Откройте игру повторно.');
+  return {...g,source:s.name,id:s.id,index};
+ },
  openSource:async(id,index,link,action,expected)=>{const s=store.sources.find(s=>s.enabled&&s.id===id);const u=s?.games[index]?.links[link];if(u!==expected)throw Error('Источник изменился. Откройте ссылку повторно.');if(action==='download')return desktopOnly();if(u?.startsWith('magnet:?')||/^https?:\/\//.test(u))ext(u);else throw Error('Недопустимая ссылка.');}
 };

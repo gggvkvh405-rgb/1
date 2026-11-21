@@ -63,4 +63,4 @@ async function getJSON(url, {max = 4 * 1024 * 1024, signal = AbortSignal.timeout
   const {res} = await request(url,{...opts,signal,headers:{'accept-encoding':'gzip, deflate, br',...headers}});
   return readJSON(res,max,signal);
 }
-module.exports = {webURL, isPublic, request, getJSON, readJSON};
+module.exports = {webURL, isPublic, publicAddress, request, getJSON, readJSON};

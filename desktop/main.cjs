@@ -8,7 +8,8 @@ const {searchSteam,officialProduct} = require('../core/steam.cjs');
 const {webURL,getJSON} = require('../core/net.cjs');
 const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
-const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings} = require('../core/state.cjs');
+const {magnetV1}=require('../core/torrent.cjs');
+const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
@@ -65,14 +66,15 @@ async function bootstrap() {
     },
     searchSources: (q,page) => searchSources(data.sources,q,page),
     availability: titles => availability(data.sources,titles),
+    sourceMatches: title => sourceMatches(data.sources,title),
+    sourceGame: (id,index,title) => readSourceGame(data.sources,id,index,title),
     openSource: async (sourceId,index,linkIndex,action,expected) => {
       const src = find(data.sources,sourceId);
       if (!src.enabled || !Number.isInteger(index) || !Number.isInteger(linkIndex)) throw Error('Ссылка недоступна.');
       const url = sourceLink(src.games[index]?.links[linkIndex]);
       if (url !== expected) throw Error('Источник изменился. Откройте ссылку повторно.');
-      if (action === 'client' && url.startsWith('magnet:')) await shell.openExternal(url);
-      else if (action === 'browser' && !url.startsWith('magnet:')) await shell.openExternal(webURL(url).href);
-      else if (action === 'download' && !url.startsWith('magnet:')) return addDownload(url);
+      if (action === 'browser' && !url.startsWith('magnet:')) await shell.openExternal(webURL(url).href);
+      else if (action === 'download') return addDownload(url,src.games[index].title);
       else throw Error('Неподдерживаемое действие.');
     },
     library: () => data.library,
@@ -97,10 +99,17 @@ async function bootstrap() {
       if (!Number.isInteger(profile) || profile < -1 || profile >= g.profiles.length) throw Error('Профиль не найден.');
       await launchGame(g.exe,g.profiles[profile]?.args || []); g.lastPlayed = new Date().toISOString(); persist();
     },
-    downloads: () => queue.list(), addDownload: raw => addDownload(webURL(raw).href),
+    downloads: () => queue.list(), addDownload: raw => addDownload(sourceLink(raw)),
     downloadAction: (id,op) => queue.action(id,op)
   };
-  async function addDownload(url) {
+  async function addDownload(url,title) {
+    if(url.startsWith('magnet:')){
+      const {xt}=magnetV1(url);
+      const label=title||new URL(url).searchParams.get('dn')||`Torrent ${xt.slice(9,17)}`;
+      const {filePaths:[folder]}=await dialog.showOpenDialog(window,{title:'Выберите папку для загрузки BitTorrent',defaultPath:app.getPath('downloads'),properties:['openDirectory','createDirectory']});
+      if(!folder)return false;
+      queue.addTorrent(url,folder,label);return true;
+    }
     const {filePath} = await dialog.showSaveDialog(window,{defaultPath:path.join(app.getPath('downloads'),nameFromURL(url))});
     if (filePath) { queue.add(url,filePath); return true; } return false;
   }

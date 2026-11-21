@@ -1,0 +1,8 @@
+{
+  "name": "webrtc-polyfill",
+  "version": "1.2.2-byazen.1",
+  "description": "ByAzen uses TCP peers, not WebRTC or native WebRTC addons.",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js"
+}

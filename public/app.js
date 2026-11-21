@@ -34,7 +34,7 @@ function home(n){
  const rows=state.tab===1?weeklyGames():state.tab===2?games.filter(g=>achievements.has(g.id)):games;
  content.innerHTML=`<section class="hero ${cyber?'cyber-hero':'alt-hero'}" aria-label="Избранная игра">
   <img class="hero-image" src="assets/${cyber?'hero':f.image}.jpg" alt="">
-  <button class="hero-link" data-action="steam-${f.id}" title="Открыть в Steam" aria-label="${esc(f.title)} — открыть в Steam"></button>
+  <button class="hero-link" data-action="steam-${f.id}" title="Открыть игру" aria-label="Открыть ${esc(f.title)}"></button>
   <div class="hero-copy"><h1>${cyber?'<img src="assets/cyberpunk-logo.png" alt="Cyberpunk 2077">':esc(f.headline)}</h1><p>${esc(f.desc)}</p></div>
  </section>
  <div class="home-feed">
@@ -43,7 +43,7 @@ function home(n){
    <button type="button" class="tab surprise" data-action="surprise">${I('spark','tab-glyph spark')}Удиви меня</button>
   </div>
   <div class="feed-title"><h2>${I(homeTabs[state.tab][0],`tab-glyph ${homeTabs[state.tab][0]}`)} ${homeTabs[state.tab][1]}</h2>${state.tab===1?'<small>Подборка редакции</small>':''}</div>
-  <section class="game-grid" aria-label="${homeTabs[state.tab][1]}">${rows.map(g=>`<button class="game-card" data-action="steam-${g.id}" title="${esc(g.title)} — открыть в Steam"><span class="card-art"><img alt="" src="assets/${g.image}.jpg"></span><span class="card-copy"><strong>${I('steam')}${esc(g.title)}</strong><span class="card-tags"><span class="source-badge">Steam</span><span class="source-indicator" data-availability="${g.id}" title="Совпадения по названию в активных источниках"><span class="source-badge">Нет источников</span></span></span></span></button>`).join('')}</section>
+  <section class="game-grid" aria-label="${homeTabs[state.tab][1]}">${rows.map(g=>`<button class="game-card" data-action="steam-${g.id}" title="Открыть ${esc(g.title)}"><span class="card-art"><img alt="" src="assets/${g.image}.jpg"></span><span class="card-copy"><strong>${I('steam')}${esc(g.title)}</strong><span class="card-tags"><span class="source-badge">Steam</span><span class="source-indicator" data-availability="${g.id}" title="Совпадения по названию в активных источниках"><span class="source-badge">Нет источников</span></span></span></span></button>`).join('')}</section>
  </div>`;
  api.availability(rows.map(g=>g.title)).then(items=>{
   if(!current(n))return;
@@ -89,7 +89,7 @@ async function catalog(n){
   const list=rows.length?`<div class="catalog-list">${rows.map(g=>{
    const sources=pageMatches.get(g.title)||[], meta=catalogMeta(g);
    const price=g.price||'', badge=sources.length?sources.map(x=>`<span class="catalog-badge">${esc(x)}</span>`).join(''):'<span class="catalog-badge">Steam</span>';
-   return `<button type="button" class="catalog-row" data-action="steam-url" data-url="${esc(g.url)}" title="${esc(g.title)} — открыть в Steam"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
+   return `<button type="button" class="catalog-row" data-action="catalog-game" data-url="${esc(g.url)}" data-title="${esc(g.title)}" title="Открыть ${esc(g.title)}"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
   }).join('')}</div>`:details('search',refined?'Нет совпадений на этой странице':'Ничего не найдено',refined?'Измените фильтры года и источников или перейдите к другой странице.':'Попробуйте изменить запрос или фильтры.');
   results.setAttribute('aria-busy','false');results.innerHTML=unavailable+list+(r.total>r.pageSize&&!r.offline?rangeButtons(r,'steam'):'');
  }
@@ -181,15 +181,16 @@ function launchDialog(g){
  $('#launch-form').onsubmit=e=>{e.preventDefault();const p=Number(new FormData(e.currentTarget).get('profile'));run(async()=>{await launch(g.id,p);dialog.close();});};
 }
 async function launch(id,p){await api.launchGame(id,p);await refreshLibrary();toast('Игра запущена.');}
+const torrentPhases={metadata:'Поиск участников и метаданных',pieces:'BitTorrent · скачивается',saving:'Сохранение файлов'};
 const statuses={queued:'В очереди',running:'Скачивается',paused:'На паузе',pausing:'Останавливается',canceling:'Отменяется',canceled:'Отменено',error:'Ошибка',done:'Завершено'};
 const humanBytes = n=>{if(n==null)return 'Размер неизвестен';const u=['Б','КБ','МБ','ГБ','ТБ'],p=n?Math.min(Math.floor(Math.log(n)/Math.log(1024)),4):0;return (n/1024**p).toLocaleString('ru',{maximumFractionDigits:p?1:0})+' '+u[p];};
 function downloads(n){
- content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте очередью прямых HTTP(S)-загрузок.',btn('Добавить загрузку','new-download','plus','primary'))}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. Если сервер не поддерживает возобновление, загрузка начнётся заново.</span></div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
+ content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками в одной очереди.',btn('Добавить загрузку','new-download','plus','primary'))}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
  run(()=>refreshDownloads(n));
 }
 async function refreshDownloads(n){
  const list=await api.downloads(), target=$('#dl-list');if(!current(n)||!target)return;
- const html=list.length?`<div class="item-list">${list.map(j=>`<article class="list-item dl-item"><span class="list-icon">${I('download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip">${statuses[j.status]||esc(j.status)}</span></h3><p>${esc(j.file)}</p><progress max="${j.total||1}" ${j.status==='running'&&j.total==null?'':`value="${j.status==='done'&&!j.total?1:j.bytes||0}"`}></progress><p>${humanBytes(j.bytes)} / ${humanBytes(j.total)}${j.error?' · '+esc(j.error):''}</p></div><div class="item-actions">${[['pause','Пауза',['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],['cancel','Отменить',['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]].filter(x=>x[2].includes(j.status)).map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('download','Очередь пуста',window.byazen?'Добавьте прямую ссылку или выберите файл из пользовательского источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
+ const html=list.length?`<div class="item-list">${list.map(j=>`<article class="list-item dl-item"><span class="list-icon">${I('download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip">${(j.kind==='torrent'&&j.status==='running'&&torrentPhases[j.phase])||statuses[j.status]||esc(j.status)}</span></h3><p>${esc(j.file)}</p><progress max="${j.total||1}" ${j.status==='running'&&j.total==null?'':`value="${j.status==='done'&&!j.total?1:j.bytes||0}"`}></progress><p>${humanBytes(j.bytes)} / ${humanBytes(j.total)}${j.error?' · '+esc(j.error):''}</p></div><div class="item-actions">${[['pause','Пауза',['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],['cancel','Отменить',['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]].filter(x=>x[2].includes(j.status)).map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('download','Очередь пуста',window.byazen?'Добавьте прямую или magnet-ссылку либо выберите игру из источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
  if(target._markup!==html){
   const was=target.contains(document.activeElement)?document.activeElement.dataset:null;
   target.innerHTML=html;target._markup=html;
@@ -224,10 +225,44 @@ async function loadSourceGames(n){
  if(!result.games.length && state.srcTerm)$('#source-games').innerHTML=details('search','Ничего не найдено','Проверьте запрос и убедитесь, что нужный источник включён.');
 }
 function showSourcePreview(d){if(!d)return;showDialog('Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>Импортируйте источник, только если доверяете ему.</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="source-import" data-id="${esc(d.id)}">${I('check')} Импортировать</button></div>`);}
-function sourceLinkDialog(g){
- showDialog(esc(g.title),`<p class="muted">Источник: ${esc(g.source)}. Ссылки не проверены на безопасность и доступность.</p><div class="link-list">${g.links.map((u,i)=>{const mag=u.startsWith('magnet:?');return `<div class="link-row"><div title="${esc(u)}">${esc(u)}</div><div class="row">${mag?`<button class="btn" data-action="open-source" data-op="client" data-link="${i}">${I('external')} Торрент-клиент</button>`:`<button class="btn" data-action="open-source" data-op="browser" data-link="${i}">${I('external')} В браузере</button><button class="btn primary" data-action="open-source" data-op="download" data-link="${i}">${I('download')} Скачать</button>`}</div></div>`;}).join('')}</div>`);
+let gameOpenRequest=0;
+async function openCatalogGame(product){
+ const request=++gameOpenRequest, version=renderId;
+ const groups=await api.sourceMatches(product.title);
+ if(request!==gameOpenRequest||!current(version))return;
+ if(!groups.length)return api.openSteam(product.url);
+ if(groups.length===1&&groups[0].count===1){
+  const entry=groups[0].entries[0], g=await api.sourceGame(groups[0].id,entry.index,entry.title);
+  if(request===gameOpenRequest&&current(version))sourceLinkDialog(g,{steam:product.url});
+ }else showGameSources(product,groups);
+}
+function showGameSources(product,groups){
+ showDialog(esc(product.title),`<p class="muted">Выберите источник и запись с нужной версией игры.</p><div class="game-source-groups">${groups.map((group,i)=>`<details class="game-source-group" ${i===0?'open':''}><summary>${I('layers')} <strong>${esc(group.name)}</strong> <span class="chip">${group.count}</span></summary><div class="game-source-entries">${group.entries.map((g,j)=>`<button class="btn game-source-entry" type="button" data-group="${i}" data-entry="${j}"><span>${esc(g.title)}<small>${[g.size,date(g.date),`Ссылок: ${g.linkCount}`].filter(Boolean).map(esc).join(' · ')}</small></span>${I('chevron')}</button>`).join('')}${group.count>group.entries.length?'<p class="small muted">Дополнительные записи можно посмотреть в разделе «Источники».</p>':''}</div></details>`).join('')}</div><div class="dialog-actions">${steamDialogButton(product.url)}</div>`);
  const version=renderId;
- dialogBody.querySelectorAll('[data-action="open-source"]').forEach(b=>b.onclick=()=>run(async()=>{if(version!==renderId)throw Error('Откройте ссылки повторно.'); const r=await api.openSource(g.id,g.index,Number(b.dataset.link),b.dataset.op,g.links[Number(b.dataset.link)]);if(b.dataset.op==='download'&&r)toast('Загрузка добавлена.');}));
+ dialogBody.querySelectorAll('.game-source-entry').forEach(b=>b.onclick=()=>run(async()=>{
+  const group=groups[Number(b.dataset.group)], entry=group.entries[Number(b.dataset.entry)];
+  if(b.disabled)return;
+  b.disabled=true;
+  try{const g=await api.sourceGame(group.id,entry.index,entry.title);if(current(version)&&dialog.open&&dialogBody.contains(b))sourceLinkDialog(g,{steam:product.url,back:()=>showGameSources(product,groups)});}
+  finally{b.disabled=false;}
+ }));
+}
+const steamDialogButton = url=>`<button type="button" class="btn" data-action="steam-url" data-url="${esc(url)}">${I('steam')} Открыть в Steam</button>`;
+function sourceLinkDialog(g,{steam,back}={}){
+ if(!g)return;
+ showDialog(esc(g.title),`<p class="muted">Источник: <strong>${esc(g.source)}</strong>. Ссылки не проверены на безопасность и доступность.</p><div class="link-list">${g.links.map((u,i)=>{const mag=u.startsWith('magnet:?');return `<div class="link-row"><div title="${esc(u)}">${esc(u)}</div><div class="row">${mag?`<button class="btn primary" data-action="open-source" data-op="download" data-link="${i}">${I('download')} Скачать в ByAzen</button>`:`<button class="btn" data-action="open-source" data-op="browser" data-link="${i}">${I('external')} В браузере</button><button class="btn primary" data-action="open-source" data-op="download" data-link="${i}">${I('download')} Скачать</button>`}</div></div>`;}).join('')}</div>${steam||back?`<div class="dialog-actions">${back?'<button class="btn" id="source-back" type="button">Другой источник</button>':''}${steam?steamDialogButton(steam):''}</div>`:''}`);
+ if(back)$('#source-back').onclick=back;
+ const version=renderId;
+ dialogBody.querySelectorAll('[data-action="open-source"]').forEach(b=>b.onclick=()=>run(async()=>{
+  if(version!==renderId)throw Error('Откройте ссылки повторно.');
+  if(b.disabled)return;
+  b.disabled=true;
+  const link=Number(b.dataset.link);
+  try {
+   const added=await api.openSource(g.id,g.index,link,b.dataset.op,g.links[link]);
+   if(b.dataset.op==='download'&&added){if(current(version)&&dialog.open&&dialogBody.contains(b)){dialog.close();go('downloads');}toast('Загрузка добавлена.');}
+  }finally{b.disabled=false;}
+ }));
 }
 const palettes=[['Аметист',263],['Океан',224],['Полярная ночь',193],['Мята',159],['Изумруд',138],['Лайм',80],['Янтарь',45],['Закат',23],['Рубин',355],['Орхидея',311]];
 const patterns=['Свечение','Горизонт','Сетка','Орбиты','Пунктир','Волны','Диагональ','Мозаика','Искры','Туман'];
@@ -269,12 +304,13 @@ function selectHero(k){state.featured=k;run(async()=>{await render();if(!state.s
 function dispatch(b){
  const d=b.dataset, a=d.action, g=state.library.find(g=>g.id===d.id);
  if(d.go)return go(d.go);
- if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a))return api.openSteam(games.find(x=>x.id===Number(a.split('-')[1])).url);
+ if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a))return openCatalogGame(games.find(x=>x.id===Number(a.split('-')[1])));
  switch(a){
   case 'close':dialog.close();break;
   case 'home-tab':state.tab=Number(d.tab);return render();
   case 'surprise':selectHero((state.featured+1+Math.floor(Math.random()*(games.length-1)))%games.length);$('.hero')?.scrollIntoView({block:'nearest'});break;
   case 'steam-url':return api.openSteam(d.url);
+  case 'catalog-game':return openCatalogGame({title:d.title,url:d.url});
   case 'steam-charts':return api.openSteamCharts();
   case 'review-catalog':state.filter={term:'',page:1,category1:'998',sort_by:'Reviews_DESC'};return go('catalog');
   case 'feedback':return showDialog('Обратная связь',`<p class="muted">Сообщите об ошибке или предложите улучшение. Откроется форма GitHub — ByAzen ничего не отправляет автоматически.</p><div class="dialog-actions">${btn('Открыть форму','feedback-open','external','primary')}</div>`);
@@ -293,7 +329,7 @@ function dispatch(b){
   case 'favorite':return api.favorite(d.id).then(refreshLibrary);
   case 'remove-game':return confirmDialog('Удалить игру?', 'Это удалит запись из библиотеки, но не файлы игры.',async()=>{await api.removeGame(d.id);await refreshLibrary();});
   case 'launch-dialog':if(g)return launchDialog(g);break;
-  case 'new-download':return urlDialog('Новая загрузка','Укажите прямую ссылку на файл. В приложении затем можно выбрать место сохранения.',async url=>{const added=await api.addDownload(url);if(added){dialog.close();await refreshDownloads(renderId);toast('Загрузка добавлена.');}});
+  case 'new-download':return urlDialog('Новая загрузка','Укажите прямую HTTP(S)-ссылку на файл или magnet-ссылку. Затем выберите место сохранения.',async url=>{const added=await api.addDownload(url);if(added){dialog.close();await refreshDownloads(renderId);toast('Загрузка добавлена.');}});
   case 'download-op':return api.downloadAction(d.id,d.op).then(()=>refreshDownloads(renderId));
   case 'source-file':return api.previewFile().then(showSourcePreview);
   case 'source-url':go('sources');queueMicrotask(()=>$('#source-url-input')?.focus());break;
