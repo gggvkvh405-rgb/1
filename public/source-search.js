@@ -208,3 +208,9 @@ export function searchSources(sources,query='',page=1,sourceId='',mode=''){
  }
  return {games:found.flat(),total,page,pageSize:limit};
 }
+
+// This deliberately uses the same index that manual search and browsing use.
+export function searchCoverage(games){
+ const {docs}=indexFor(games);
+ return {browsable:docs.length,searchable:docs.reduce((n,doc)=>n+Number(Boolean(doc.exact)),0)};
+}

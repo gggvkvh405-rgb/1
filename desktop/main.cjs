@@ -11,7 +11,8 @@ const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
-const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT}=require('../core/presets.cjs');
+const {auditSources}=require('../core/source-audit.cjs');
+const {installPresets,createPresetSync,urlKey,CUSTOM_SOURCE_LIMIT,PRESET_LIMITS}=require('../core/presets.cjs');
 
 const root = path.resolve(__dirname,'../public');
 const origin = 'byazen://app';
@@ -30,6 +31,22 @@ async function bootstrap() {
   async function readSource(url,limits={maxBytes:MAX_JSON}) {
     return parseSource(await getJSON(webURL(url).href,{max:limits.maxBytes}),limits);
   }
+  async function readSourceFile(file){
+    const fd=await fs.open(file,'r');
+    try{
+      const stat=await fd.stat();
+      if(!stat.isFile()||stat.size>MAX_JSON)throw Error('Требуется JSON до 4 МБ.');
+      const buf=Buffer.alloc(MAX_JSON+1);
+      const {bytesRead}=await fd.read(buf,0,buf.length,0);
+      return parseSource(buf.subarray(0,bytesRead).toString('utf8'));
+    }finally{await fd.close();}
+  }
+  function readConnectedSource(source){
+    if(source.kind==='file')return readSourceFile(source.file);
+    if(source.kind==='url')return readSource(source.url,source.presetName?PRESET_LIMITS:undefined);
+    throw Error('Неизвестный вид источника.');
+  }
+  let auditTask;
   const presetSync=createPresetSync(data.sources,readSource,persist);
   if(installPresets(data))persist();
   const actions = {
@@ -39,15 +56,11 @@ async function bootstrap() {
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
     sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
+    auditSources: () => auditTask||=(auditSources(data.sources,readConnectedSource).finally(()=>{auditTask=null;})),
     previewFile: async () => {
       const {filePaths:[file]} = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Hydra JSON',extensions:['json']}]});
       if (!file) return null;
-      const fd = await fs.open(file,'r');
-      try {
-        const stat = await fd.stat(); if (!stat.isFile() || stat.size > MAX_JSON) throw Error('Выберите файл JSON размером до 4 МБ.');
-        const buf = Buffer.alloc(MAX_JSON + 1); const {bytesRead} = await fd.read(buf,0,buf.length,0);
-        return stash(parseSource(buf.subarray(0,bytesRead).toString('utf8')),{kind:'file',file});
-      } finally { await fd.close(); }
+      return stash(await readSourceFile(file),{kind:'file',file});
     },
     previewURL: async raw => {const url = webURL(raw).href; return stash(await readSource(url),{kind:'url',url});},
     importSource: id => {
@@ -65,13 +78,9 @@ async function bootstrap() {
         if(src.enabled&&src.presetName&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
       }
       else if(op==='refresh'&&src.presetName)return presetSync.refresh(src);
-      else if (op === 'refresh' && src.kind === 'url') {
-        const parsed = await readSource(src.url); if (!data.sources.includes(src)) return;
+      else if(op==='refresh'){
+        const parsed=await readConnectedSource(src);if(!data.sources.includes(src))return;
         Object.assign(src,parsed,{updated:new Date().toISOString()});
-      } else if (op === 'refresh' && src.kind === 'file') {
-        const fd = await fs.open(src.file,'r');
-        try { const stat = await fd.stat(); if (!stat.isFile() || stat.size > MAX_JSON) throw Error('Требуется JSON до 4 МБ.'); const buf = Buffer.alloc(MAX_JSON + 1); const {bytesRead} = await fd.read(buf,0,buf.length); Object.assign(src,parseSource(buf.subarray(0,bytesRead).toString('utf8')),{updated:new Date().toISOString()}); }
-        finally { await fd.close(); }
       } else throw Error('Недопустимое действие.');
       persist();
     },

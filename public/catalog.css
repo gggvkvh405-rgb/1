@@ -90,3 +90,7 @@
 .source-jump,.source-jump label { display:flex; align-items:center; gap:6px; }
 .source-jump input { width:88px; min-height:36px; }
 .source-jump .btn { min-height:36px; font-size:var(--ui-small); }
+.source-audit-list { list-style:none; padding:0; display:grid; gap:6px; margin:10px 0; }
+.source-audit-list li { border-radius:var(--radius-sm); padding:8px; border:1px solid var(--line); overflow-wrap:anywhere; }
+.source-audit-list p,.source-audit-list small { color:var(--muted); font-size:var(--ui-small); }
+#source-audit-report textarea { margin-top:7px; resize:vertical; }
