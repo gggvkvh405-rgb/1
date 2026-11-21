@@ -1,3 +1,4 @@
+import {collections,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
 import {openDownloadPicker} from './download-picker.js';
 import {motionAllowed,syncMotion,play,reveal,revealSection} from './motion.js';
 import {icon as I} from './icons.js';
@@ -9,7 +10,7 @@ const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themePage:0};
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:''};
 let renderId=0;
 const details = (icon,title,desc,action='')=>`<div class="empty"><span class="empty-icon">${I(icon)}</span><h3>${esc(title)}</h3><p>${esc(desc)}</p>${action}</div>`;
 const btn = (label,action,glyph='',classes='')=>`<button type="button" class="btn ${classes}" data-action="${action}">${glyph?I(glyph):''}${label}</button>`;
@@ -351,33 +352,64 @@ function openCatalogGame(product){
  const version=renderId;
  openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
 }
-const palettes=[['Аметист',263],['Океан',224],['Полярная ночь',193],['Мята',159],['Изумруд',138],['Лайм',80],['Янтарь',45],['Закат',23],['Рубин',355],['Орхидея',311]];
-const patterns=['Свечение','Горизонт','Сетка','Орбиты','Пунктир','Волны','Диагональ','Мозаика','Искры','Туман'];
-const classics=[['dark','Тёмная',263],['light','Светлая',250],['oled','OLED',277]];
-function themeStyle(el,id,hue,pattern){el.style.setProperty('--hue',hue);el.dataset.pattern=pattern;el.dataset.look=id;}
 function applyTheme(){
- const id=state.settings.theme;document.documentElement.dataset.theme=id;
- document.documentElement.classList.toggle('motion-off',state.settings.motion);syncMotion();
- const k=Number(id.split('-')[1]);
- if(Number.isInteger(k)&&k>=0&&k<100)themeStyle(document.documentElement,id,palettes[Math.floor(k/10)][1],k%10);
- else themeStyle(document.documentElement,id,263,'none');
+ const theme=getTheme(state.settings.theme),root=document.documentElement;
+ root.dataset.theme=theme.id;
+ root.dataset.themeGroup=theme.group;
+ root.style.setProperty('--hue',theme.hue);
+ root.style.setProperty('--second-hue',theme.alt);
+ root.classList.toggle('motion-off',state.settings.motion);syncMotion();
+ const wall=$('#theme-wall'),image=$('#theme-wall-image');
+ wall.hidden=!theme.asset;
+ if(theme.asset&&image.getAttribute('src')!==theme.asset)image.src=theme.asset;
+ if(!theme.asset)image.removeAttribute('src');
 }
-function themesMarkup(){
- const all=Array.from({length:100},(_,i)=>[`theme-${i}`,`${palettes[Math.floor(i/10)][0]} · ${patterns[i%10]}`,palettes[Math.floor(i/10)][1],i%10]);
- const cards=arr=>arr.map(([id,title,hue,pattern='none'])=>`<button class="theme-card ${id===state.settings.theme?'theme-selected':''}" aria-pressed="${id===state.settings.theme}" data-action="theme" data-theme-id="${id}" data-hue="${hue}" data-pattern="${pattern}"><span class="theme-preview"><i></i><i></i><i></i></span><span>${esc(title)} ${id===state.settings.theme?I('check'):''}</span></button>`).join('');
- return `<h3>Классические</h3><div class="theme-grid classic-grid">${cards(classics)}</div><div class="section-heading"><h3>Визуальные варианты <span class="chip">100</span></h3><select id="theme-page" aria-label="Палитра темы">${palettes.map(([name],i)=>`<option value="${i}" ${i===state.themePage?'selected':''}>${name}</option>`).join('')}</select></div><div class="theme-grid">${cards(all.slice(state.themePage*10,state.themePage*10+10))}</div>`;
+function miniature(theme,lazy=true){
+ return `<span class="theme-preview" aria-hidden="true">${theme.asset?`<img src="${theme.asset}" alt="" ${lazy?'loading="lazy"':''} decoding="async">`:''}<span class="mini-shell"><i></i><i></i><i></i></span></span>`;
+}
+function themeCard(theme){
+ const active=state.settings.theme===theme.id;
+ return `<button type="button" class="theme-card ${active?'theme-selected':''}" data-action="theme-preview" data-theme-id="${theme.id}" aria-haspopup="dialog" aria-label="Предпросмотр: ${esc(theme.name)}${active?' (активна)':''}">${miniature(theme)}<span class="theme-caption"><span><strong>${esc(theme.name)}</strong><small>${esc(theme.category)}</small></span>${I(active?'check':'chevron')}</span></button>`;
+}
+function applyThemeCardStyle(parent){
+ parent.querySelectorAll('.theme-card, .theme-demo').forEach(node=>{
+  const theme=getTheme(node.dataset.themeId);
+  node.style.setProperty('--sample',theme.hue);
+  node.style.setProperty('--sample-alt',theme.alt);
+  node.dataset.look=theme.id;
+ });
+}
+function themeGallery(){
+ const active=getTheme(state.settings.theme),cover=active.asset?active:visualThemes[0];
+ return `<header class="theme-showcase"><img src="${cover.asset}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея тем</h2><p>100 фонов и 10 коллекций. Выбери свой фон, цвет панелей и атмосферный эффект.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-random">${I('spark')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">Активна: ${esc(active.name)}</span></div></div></header>
+ <div class="theme-tools"><label class="theme-filter"><span>Коллекция</span><select id="theme-group" aria-label="Коллекция тем"><option value="">Все коллекции</option>${collections.map(c=>`<option value="${c.id}" ${c.id===state.themeGroup?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label class="theme-filter theme-search"><span>Поиск темы</span><span class="input-icon">${I('search')}<input id="theme-search" type="search" placeholder="Например, северное сияние" maxlength="60" value="${esc(state.themeQuery)}"></span></label></div>
+ <p class="theme-count muted small" id="theme-count" aria-live="polite"></p><div id="theme-results" class="theme-grid theme-results"></div>
+ <div class="theme-classics" id="theme-classics" tabindex="-1"><div class="section-heading"><h3>Классические темы</h3><span class="muted small">Без фоновых эффектов</span></div><div class="theme-grid classic-grid">${classicThemes.map(themeCard).join('')}</div></div>`;
+}
+function drawThemeResults(){
+ const results=$('#theme-results'),found=findThemes(state.themeGroup,state.themeQuery);
+ results.innerHTML=found.length?found.map(themeCard).join(''):details('search','Темы не найдены','Введи другое название или выбери другую коллекцию.');
+ $('#theme-count').textContent=`Показано: ${found.length} из ${visualThemes.length}`;
+ applyThemeCardStyle(results);
+}
+function drawThemes(){
+ const host=$('#themes');host.innerHTML=themeGallery();
+ applyThemeCardStyle(host);drawThemeResults();
+ $('#theme-group').onchange=e=>{state.themeGroup=e.target.value;drawThemeResults();};
+ $('#theme-search').oninput=e=>{state.themeQuery=e.target.value;drawThemeResults();};
+}
+function previewTheme(id){
+ const theme=getTheme(id),active=theme.id===state.settings.theme;
+ showDialog(esc(theme.name),`<div class="theme-demo" data-theme-id="${theme.id}" data-demo-group="${theme.group}">${miniature(theme,false)}<span class="theme-demo-shade" aria-hidden="true"></span><span class="theme-atmosphere" aria-hidden="true"></span><div class="theme-demo-ui" aria-hidden="true"><span class="theme-demo-logo">B</span><strong>ByAzen</strong><span>Каталог</span><span>Библиотека</span></div><div class="theme-demo-detail" aria-hidden="true"><strong>${esc(theme.category)}</strong><span>${esc(theme.effect)}</span></div></div><p class="theme-preview-summary muted small">${theme.asset?`Эффект: ${esc(theme.effect)}. Фон используется во всех разделах лаунчера.`:'Однотонный фон без анимации.'}</p><div class="dialog-actions"><button type="button" class="btn" data-action="close">${active?'Закрыть':'Отмена'}</button>${active?'':`<button type="button" class="btn primary" data-action="theme" data-theme-id="${theme.id}">${I('check')} Применить тему</button>`}</div>`,{variant:'theme',eyebrow:'ПРЕДПРОСМОТР ТЕМЫ'});
+ applyThemeCardStyle(dialog);
 }
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
- <form id="settings-form" class="pane settings-pane"><h2>Основные</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>
- <div class="section-heading"><div><span class="section-icon">${I('spark')}</span><h2>Галерея тем</h2></div></div><div class="pane theme-pane" id="themes"></div>`;
+ <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button></div>
+ <section class="theme-pane" id="themes" aria-label="Галерея тем" tabindex="-1"></section>
+ <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
  drawThemes();
  $('#settings-form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{state.settings=await api.saveSettings({...state.settings,name:f.get('name').trim()||'Игрок',region:f.get('region'),motion:f.has('motion')});state.filter.cc=state.settings.region;applyTheme();sidebar();toast('Настройки сохранены.');});};
-}
-function drawThemes(){
- $('#themes').innerHTML=themesMarkup();
- $('#themes').querySelectorAll('.theme-card').forEach(el=>themeStyle(el,el.dataset.themeId,el.dataset.hue,el.dataset.pattern));
- $('#theme-page').onchange=e=>{state.themePage=Number(e.target.value);drawThemes();reveal($('#themes'),'.theme-grid:not(.classic-grid) .theme-card','pop');$('#theme-page').focus();};
 }
 function urlDialog(title,desc,callback){
  showDialog(title,`<p class="muted">${desc}</p><form id="url-form"><label class="field"><span>URL</span><input type="url" name="url" placeholder="https://…" required maxlength="4096"></label><div class="dialog-actions"><button class="btn primary" type="submit">${I('arrow')} Продолжить</button></div></form>`);
@@ -442,7 +474,23 @@ async function dispatch(b){
   case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
   case 'source-op':if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
-  case 'theme':return api.saveSettings({...state.settings,theme:d.themeId}).then(x=>{state.settings=x;applyTheme();if(state.section==='settings'){drawThemes();const selected=$('.theme-selected');selected?.focus({preventScroll:true});play(selected,[{scale:'.96'},{scale:'1.026',offset:.58},{scale:'1'}],{duration:360});}toast('Тема применена.');});
+  case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
+  case 'theme-preview':return previewTheme(d.themeId);
+  case 'theme-random':{
+   const candidates=findThemes(state.themeGroup,state.themeQuery).filter(t=>t.id!==state.settings.theme);
+   const pool=candidates.length?candidates:visualThemes.filter(t=>t.id!==state.settings.theme);
+   return previewTheme(pool[Math.floor(Math.random()*pool.length)].id);
+  }
+  case 'theme':{
+   b.disabled=true;
+   try{
+    state.settings=await api.saveSettings({...state.settings,theme:getTheme(d.themeId).id});applyTheme();
+    if(b.isConnected&&dialog.open)dialog.close();
+    if(state.section==='settings'){drawThemes();const selected=$('.theme-selected');(selected||$('[data-action=theme-random]'))?.focus({preventScroll:true});play(selected,[{scale:'.96'},{scale:'1.023',offset:.58},{scale:'1'}],{duration:360});}
+    toast('Тема применена.');
+   }finally{b.disabled=false;}
+   return;
+  }
  }
 }
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-action],button[data-go]');if(b&&!b.disabled)run(()=>dispatch(b));});
@@ -451,4 +499,4 @@ $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('s
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-run(async()=>{try{state.settings=await api.settings();if(state.settings.theme.startsWith('theme-'))state.themePage=Math.floor(Number(state.settings.theme.slice(6))/10);applyTheme();state.library=await api.library();}finally{sidebar();await render();}});
+run(async()=>{try{state.settings=await api.settings();applyTheme();state.library=await api.library();}finally{sidebar();await render();}});

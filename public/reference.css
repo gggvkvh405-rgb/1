@@ -16,7 +16,7 @@
  background:var(--side); border-right:1px solid var(--subtle); padding:14px 11px;
  scrollbar-width:thin;
 }
-.stage { margin-left:var(--sidebar); min-height:100vh; background-image:var(--fx); background-size:var(--fxsize,auto); background-attachment:fixed; }
+.stage { margin-left:var(--sidebar); min-height:100vh; }
 .profile,.nav-link,.side-game,.quick-button { background:transparent; border:0; color:var(--text); }
 .profile { display:flex; align-items:center; text-align:left; width:100%; gap:8px; min-height:52px; padding:4px 6px; margin:1px 0 10px; border-radius:var(--radius-sm); }
 .profile:hover,.side-game:hover,.nav-link:hover,.quick-button:hover { background:var(--hover); }

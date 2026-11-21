@@ -1,7 +1,7 @@
 {
   "name": "byazen",
   "productName": "ByAzen",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "Персональный игровой лаунчер",
   "author": "ByAzen",
   "private": true,
@@ -10,6 +10,7 @@
     "start": "electron .",
     "dev": "node scripts/preview.cjs",
     "test": "node --test",
+    "themes:art": "node scripts/theme-art.cjs",
     "build:win": "electron-builder --win portable --x64"
   },
   "dependencies": {
