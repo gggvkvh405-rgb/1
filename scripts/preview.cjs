@@ -2,6 +2,7 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 const {pipeline} = require('node:stream/promises');
+const steamDetail=require('../core/steam-detail.cjs').createSteamDetails();
 const {searchSteam} = require('../core/steam.cjs');
 const {parseSource, MAX_JSON} = require('../core/sources.cjs');
 const root = path.resolve(__dirname,'../public');
@@ -10,16 +11,16 @@ let activeSteam = 0;
 http.createServer(async (req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');
  const url = new URL(req.url,'http://preview');
- if (req.method === 'POST' && ['/api/steam','/api/source'].includes(url.pathname)) {
+ if (req.method === 'POST' && ['/api/steam','/api/steam-detail','/api/source'].includes(url.pathname)) {
    res.setHeader('Content-Type','application/json; charset=UTF-8');
    try {
      if (req.headers['sec-fetch-site'] === 'cross-site') throw Error('Запрос с другого сайта запрещён.');
-     const steam = url.pathname === '/api/steam', limit = steam ? 4096 : 6*MAX_JSON+2;
+     const steam = url.pathname !== '/api/source', limit = steam ? 4096 : 6*MAX_JSON+2;
      let size=0; const body=[];
      for await (const chunk of req){size+=chunk.length;if(size>limit)throw Error('Слишком большой запрос.');body.push(chunk);}
      const data=JSON.parse(Buffer.concat(body).toString());
      let result;
-     if (steam) {if(activeSteam>=4)throw Error('Слишком много запросов к Steam.');activeSteam++;try{result=await searchSteam(data);}catch{throw Error('Steam пока недоступен из среды предпросмотра. Попробуйте позже или откройте настольное приложение.');}finally{activeSteam--;}}
+     if (steam) {if(activeSteam>=4)throw Error('Слишком много запросов к Steam.');activeSteam++;try{result=await (url.pathname==='/api/steam-detail'?steamDetail(data?.id,data?.cc):searchSteam(data));}catch{throw Error('Steam пока недоступен из среды предпросмотра. Попробуйте позже или откройте настольное приложение.');}finally{activeSteam--;}}
      else {if(typeof data!=='string')throw Error('Ожидается текст Hydra JSON.');result=parseSource(data);}
      res.end(JSON.stringify(result));
    } catch(e) {res.statusCode=400;res.end(JSON.stringify({error:e.message}));}

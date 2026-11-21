@@ -14,10 +14,11 @@ export function describeLink(raw){
  return {label:'Неизвестная ссылка',detail:'Формат не поддерживается',supported:false};
 }
 
-export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,onPick,isCurrent}){
+export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,onPick,isCurrent,onDetails,onBookmark}){
  const art=product.image?`<img alt="" src="${esc(product.image)}">`:'';
- showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p></div></header><div class="picker-main" aria-busy="true"></div><div class="picker-related" hidden></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
+ showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p>${onDetails?'<button type="button" class="btn" id="picker-game-details">Карточка Steam</button>':''}</div></header><div class="picker-main" aria-busy="true"></div><div class="picker-related" hidden></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
  const view=dialog.querySelector('.download-picker'), main=view.querySelector('.picker-main'), related=view.querySelector('.picker-related');
+ const details=view.querySelector('#picker-game-details');if(details)details.onclick=()=>{if(!busy)onDetails();};
  const alive=()=>dialog.open&&view.isConnected&&isCurrent();
  let groups=[], groupIndex=0, serial=0, relatedRequest=0, busy=false;
  const stateMarkup=(glyph,title,text,actions='')=>`<div class="picker-state"><span class="picker-state-icon">${I(glyph)}</span><div><strong>${title}</strong><p>${esc(text)}</p>${actions}</div></div>`;
@@ -91,7 +92,8 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
    const game=await api.sourceGame(group.id,item.index,item.title);
    if(!alive()||ticket!==serial||groupIndex!==i)return;
    const links=game.links.map(describeLink);let picked=Math.max(0,links.findIndex(link=>link.supported));
-   transfer.innerHTML=`${links.length>1?`<label class="picker-method-label">Способ загрузки<select class="picker-method">${links.map((link,k)=>`<option value="${k}" ${k===picked?'selected':''} ${link.supported?'':'disabled'}>${k+1}. ${esc(link.label)} · ${esc(link.detail)}</option>`).join('')}</select></label>`:''}<div class="picker-transport">${I('link')}<div><strong></strong><small></small></div></div><p class="picker-feedback" role="status"></p><button type="button" class="btn primary picker-download">${I('download')} Скачать в ByAzen</button>`;
+   transfer.innerHTML=`${links.length>1?`<label class="picker-method-label">Способ загрузки<select class="picker-method">${links.map((link,k)=>`<option value="${k}" ${k===picked?'selected':''} ${link.supported?'':'disabled'}>${k+1}. ${esc(link.label)} · ${esc(link.detail)}</option>`).join('')}</select></label>`:''}<div class="picker-transport">${I('link')}<div><strong></strong><small></small></div></div><p class="picker-feedback" role="status"></p><button type="button" class="btn primary picker-download">${I('download')} Скачать в ByAzen</button>${onBookmark?'<button type="button" class="btn" id="picker-bookmark">В закладки</button>':''}`;
+   const bookmark=transfer.querySelector('#picker-bookmark');if(bookmark)bookmark.onclick=()=>{if(alive())onBookmark(group.id,item);};
    const button=transfer.querySelector('.picker-download'), status=transfer.querySelector('.picker-feedback');
    function setLink(k){
     picked=k;

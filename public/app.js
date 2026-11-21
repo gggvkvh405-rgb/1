@@ -1,3 +1,7 @@
+import {fileTools} from './file-workbench.js';
+import {cleanHome,setupHomeLayout} from './home-layout.js';
+import {catalogTools,productId} from './catalog-workbench.js';
+import {sourceTools} from './source-workbench.js';
 import {cleanPersonal,wallpaperTheme,keyFromEvent} from './personal-options.js';
 import {setupPersonal,setupGamepad,showIntro,themeTone} from './personal-tools.js';
 import {packTheme,unpackTheme} from './theme-package.js';
@@ -19,7 +23,8 @@ const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],journal:['Журнал','clock'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null,slides:[],downloadTab:'active'};
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',srcGrouped:false,themeGroup:'',themeQuery:'',wallpaper:null,slides:[],downloadTab:'active'};
+let appearanceRuntime={safe:false,battery:false,playing:false};
 let renderId=0,customURL,disposeWallpaperPreview,slideURL,slideIndex=0,slideStarted=0,sessionNotices=[];
 function rememberToast(text,error){
  if(!error)return;
@@ -34,7 +39,7 @@ const btn = (label,action,glyph='',classes='')=>`<button type="button" class="bt
 const head = (eyebrow,title,desc,actions='')=>`<div class="page-head"><div><div class="eyebrow"><i></i>${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div>${actions?`<div class="head-actions">${actions}</div>`:''}</div>`;
 const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria-label="${esc(label)}">${items.map(([v,t])=>`<option value="${esc(v)}" ${v===selected?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
 const current = (n)=>n===renderId;
-function toast(text,error=false){rememberToast(text,error);if(state.settings.personal?.sound)void themeTone(state.settings.personal.sound,state.settings.personal.volume,'notice');const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
+function toast(text,error=false){rememberToast(text,error);if(!appearanceRuntime.safe&&state.settings.personal?.sound)void themeTone(state.settings.personal.sound,state.settings.personal.volume,'notice');const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
 function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing){disposeWallpaperPreview?.();dialog.close();}dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
@@ -58,13 +63,13 @@ function home(n){
  const recent=state.library.filter(g=>(g.exe||g.steamAppId)&&g.lastPlayed).sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed))[0];
  const f=games[state.featured], cyber=state.featured===0;
  const rows=state.tab===1?weeklyGames():state.tab===2?games.filter(g=>achievements.has(g.id)):games;
- content.innerHTML=`<section class="hero ${cyber?'cyber-hero':'alt-hero'}" aria-label="Избранная игра">
+ const feature=`<section class="hero ${cyber?'cyber-hero':'alt-hero'}" aria-label="Избранная игра">
   <img class="hero-image" src="assets/${cyber?'hero':f.image}.jpg" alt="">
   <button class="hero-link" data-action="steam-${f.id}" title="Открыть игру" aria-label="Открыть ${esc(f.title)}"></button>
   <div class="hero-copy"><h1>${cyber?'<img src="assets/cyberpunk-logo.png" alt="Cyberpunk 2077">':esc(f.headline)}</h1><p>${esc(f.desc)}</p></div>
- </section>
- ${recent?`<section class="pane continue-game"><div><div class="eyebrow">ПОСЛЕДНИЙ ЗАПУСК</div><h2>${esc(recent.title)}</h2></div><button type="button" class="btn primary" data-action="continue-game" data-id="${esc(recent.id)}">${I('play')} Продолжить игру</button></section>`:''}
- <div class="home-feed">
+ </section>`;
+ const resume=recent?`<section class="pane continue-game"><div><div class="eyebrow">ПОСЛЕДНИЙ ЗАПУСК</div><h2>${esc(recent.title)}</h2></div><button type="button" class="btn primary" data-action="continue-game" data-id="${esc(recent.id)}">${I('play')} Продолжить игру</button></section>`:'';
+ const discovery=`<div class="home-feed">
   <div class="discovery">
    <div class="tabs" aria-label="Подборки">${homeTabs.map(([glyph,name],j)=>`<button type="button" class="tab ${j===state.tab?'selected':''}" data-action="home-tab" data-tab="${j}" aria-pressed="${j===state.tab}" ${j===1?'title="Редакционная подборка, не рейтинг Steam"':''}>${I(glyph,`tab-glyph ${glyph}`)}${name}</button>`).join('')}</div>
    <button type="button" class="tab surprise" data-action="surprise">${I('spark','tab-glyph spark')}Удиви меня</button>
@@ -72,6 +77,12 @@ function home(n){
   <div class="feed-title"><h2>${I(homeTabs[state.tab][0],`tab-glyph ${homeTabs[state.tab][0]}`)} ${homeTabs[state.tab][1]}</h2>${state.tab===1?'<small>Подборка редакции</small>':''}</div>
   <section class="game-grid" aria-label="${homeTabs[state.tab][1]}">${rows.map(g=>`<button class="game-card" data-action="steam-${g.id}" title="Открыть ${esc(g.title)}"><span class="card-art"><img alt="" src="assets/${g.image}.jpg"></span><span class="card-copy"><strong>${I('steam')}${esc(g.title)}</strong><span class="card-tags"><span class="source-badge">Steam</span><span class="source-indicator" data-availability="${g.id}" title="Совпадения по названию в активных источниках"><span class="source-badge">Нет источников</span></span></span></span></button>`).join('')}</section>
  </div>`;
+ const widgets=cleanHome(state.settings.homeWidgets),boxes={feature,continue:resume,discovery,
+  library:`<section class="pane home-widget"><div><div class="eyebrow">МОЯ БИБЛИОТЕКА</div><h2>${state.library.length} игр</h2><p class="muted small">Избранных: ${state.library.filter(g=>g.favorite).length}</p></div><button type="button" class="btn" data-go="library">Открыть библиотеку</button></section>`,
+  activity:`<section class="pane home-widget"><div><div class="eyebrow">ЗАГРУЗКИ</div><h2 id="home-queue">Очередь</h2><p id="home-queue-info" class="muted small"></p></div><button type="button" class="btn" data-go="downloads">Открыть очередь</button></section>`};
+ content.innerHTML=widgets.map(id=>boxes[id]).join('')+`<div class="home-widget-toolbar">${btn('Настроить главную','home-config','sliders')}</div>`;
+ if(widgets.includes('activity'))void downloadSnapshot().then(({items})=>{if(!current(n))return;$('#home-queue').textContent=`Активных: ${items.filter(j=>j.status==='running').length}`;$('#home-queue-info').textContent=`Ожидают: ${items.filter(j=>j.status==='queued').length}`;}).catch(()=>{});
+ if(!widgets.includes('discovery'))return;
  api.availability(rows.map(g=>g.title)).then(items=>{
   if(!current(n))return;
   for(const {title,sources} of items){
@@ -82,6 +93,16 @@ function home(n){
 }
 const catalogLocal = {min:FIRST_YEAR,max:LAST_YEAR,sources:[],mobileOpen:false};
 const catalogPanels = new Map();
+const coopOptions=[['','Любой режим'],['9','Кооператив'],['38','Онлайн-кооператив'],['48','Локальный / разделённый экран']];
+const catTools=catalogTools({api,dialog,showDialog,esc,btn,run,toast,get:()=>state,go,onGame:openCatalogGame,onSource:searchInSources,
+ readFilters:()=>({steam:{...state.filter,page:1},local:{min:catalogLocal.min,max:catalogLocal.max,sources:[...catalogLocal.sources]}}),
+ applyFilters:({steam,local})=>{state.filter={...steam,page:1};Object.assign(catalogLocal,{min:local?.min??FIRST_YEAR,max:local?.max??LAST_YEAR,sources:Array.isArray(local?.sources)?local.sources:[]});go('catalog');},
+ openSetting:(section,id)=>{
+  if(section==='library'){const g=state.library.find(g=>g.id===id);go('library');if(g)editGame(g);return;}
+  if(section==='downloads'){go('downloads');return;}
+  go('settings');queueMicrotask(()=>{if(section==='personal')personalTools.open();else document.getElementById(section)?.scrollIntoView({block:'start'});});
+ }});
+const feedsTools=sourceTools({api,dialog,showDialog,esc,btn,run,toast,render,onSearch:searchInSources,onGame:g=>openCatalogGame({title:g.groupTitle||g.title,preferred:g})});
 const yearBox = (name,min,max,value,label) => `<input type="range" name="${name}" min="${min}" max="${max}" value="${value}" aria-label="${label}">`;
 const facet = (key, title, body, opened=true, count) => `<details class="catalog-facet ${key}" data-panel="${key}" ${(catalogPanels.get(key)??opened)?'open':''}><summary>${I('down')}<i></i><span>${title}</span>${count!=null?`<small>${count}</small>`:''}</summary><div class="catalog-facet-body">${body}</div></details>`;
 const resultCaption = n => `${n.toLocaleString('ru')} ${ {one:'результат',few:'результата',many:'результатов'}[new Intl.PluralRules('ru').select(n)] || 'результатов' }`;
@@ -93,7 +114,7 @@ async function catalog(n){
  const liveFields=properties.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||'',label)}</label>`).join('');
  content.innerHTML=`<form id="catalog-form" class="catalog-layout ${catalogLocal.mobileOpen?'filters-open':''}">
  <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p>${!term?btn('Все игры из источников','browse-sources','layers','catalog-browse-sources'):''}</div>
- <div class="catalog-sort"><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
+ <div class="catalog-sort"><div class="row catalog-work-buttons">${btn('Сохранённые фильтры','catalog-saved','sliders')}${api.steamDetail?`${btn('Желаемое','catalog-wishes','star')}${btn('Релизы','catalog-releases','calendar')}${btn('Сравнить','catalog-compare','grid')}`:''}</div><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
  <div class="catalog-result-stack">${term?`<section id="catalog-feed-results" class="catalog-feed-results" aria-labelledby="catalog-feed-title"><div class="catalog-feed-header"><h2 id="catalog-feed-title">${I('layers')} В подключённых источниках</h2>${btn('Искать в источниках','search-sources','arrow')}</div><div class="catalog-feed-summary" role="status">Ищем по загруженным спискам…</div><div class="catalog-feed-items"></div></section>`:''}${term?`<h2 class="catalog-steam-title">${I('steam')} Результаты Steam</h2>`:''}<section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section></div>
  <aside id="catalog-filters" class="catalog-filters" aria-label="Фильтры каталога"><div class="catalog-filter-scroll">
  <div class="catalog-era" aria-label="Фильтр по эпохе"><button type="button" data-era="modern">${I('grid')}Современные игры</button><button type="button" data-era="classic">${I('game')}Классика</button></div>
@@ -101,7 +122,7 @@ async function catalog(n){
  ${facet('genres','Жанры',`<p class="facet-help">${genres.length} вариантов</p>${checklist(genres,selected,'steamTag','Поиск жанров')}`,true,genres.length)}
  ${facet('tags','Теги',`<p class="facet-help">${tags.length} вариантов</p>${checklist(tags,selected,'steamTag','Поиск тегов')}`,true,tags.length)}
  ${facet('source-facet','Источники загрузки','<div id="catalog-source-options"><p class="muted">Загружаем источники…</p></div>')}
- ${facet('properties','Параметры Steam',`<label class="field"><span>Название</span><input name="term" value="${esc(f.term)}" maxlength="100" placeholder="Введите название игры"></label>${liveFields}<label class="field"><span>Регион Steam</span>${pick('cc',regions,f.cc||state.settings.region,'Регион Steam')}</label><label class="toggle"><input name="specials" type="checkbox" ${f.specials?'checked':''}> Только со скидкой</label>`,false)}
+ ${facet('properties','Параметры Steam',`<label class="field"><span>Название</span><input name="term" value="${esc(f.term)}" maxlength="100" placeholder='Название или "точная фраза" -demo'></label>${liveFields}<label class="field"><span>Кооператив</span>${pick('coop',coopOptions,f.coop||'','Тип кооператива')}</label><label class="toggle"><input name="hideAddons" type="checkbox" ${f.hideAddons?'checked':''}> Скрыть DLC и демо</label><label class="toggle"><input name="comingSoon" type="checkbox" ${f.comingSoon?'checked':''}> Предстоящие релизы</label><label class="field"><span>Регион Steam</span>${pick('cc',regions,f.cc||state.settings.region,'Регион Steam')}</label><label class="toggle"><input name="specials" type="checkbox" ${f.specials?'checked':''}> Только со скидкой</label>`,false)}
  </div><div class="catalog-apply">${btn('Сбросить','reset-filters')}<button type="submit" class="btn primary">${I('search')} Применить</button></div>
  </aside></form>`;
  const form=$('#catalog-form'), results=$('#catalog-results'), sourceBox=$('#catalog-source-options');
@@ -110,19 +131,19 @@ async function catalog(n){
  function drawPage(){
   if(!pageResult||!current(n))return;
   const r=pageResult, rows=refinePage(r.games,catalogLocal,pageMatches);
-  const refined=catalogLocal.min!==FIRST_YEAR||catalogLocal.max!==LAST_YEAR||catalogLocal.sources.length>0;
+  const refined=Boolean(f.term&&/(?:^|\s)[+-]|"/.test(f.term))||catalogLocal.min!==FIRST_YEAR||catalogLocal.max!==LAST_YEAR||catalogLocal.sources.length>0;
   $('#catalog-total').textContent=r.offline?`Локальная подборка: ${r.total.toLocaleString('ru')}`:resultCaption(r.total);
-  $('#catalog-hint').textContent=refined?`Показано на этой странице: ${rows.length} из ${r.games.length}`:'Используйте боковую панель для уточнения поиска';
+  $('#catalog-hint').textContent=refined?`Показано на этой странице: ${rows.length} из ${r.games.length}`:f.comingSoon?'Предстоящие релизы по данным магазина Steam':'Используйте боковую панель для уточнения поиска';
   const keys=JSON.stringify(rows.map(g=>g.url));
   const badgesFor=g=>{const names=pageMatches.get(g.title)||[];return names.length?names.map(x=>`<span class="catalog-badge">${esc(x)}</span>`).join(''):'<span class="catalog-badge">Steam</span>';};
   if(rows.length&&keys===shownKeys){
    results.querySelectorAll('.catalog-badges').forEach((el,i)=>{const html=badgesFor(rows[i]);if(el.innerHTML!==html)el.innerHTML=html;});
    return;
   }
-  const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>Steam недоступен. Показана локальная подборка без актуальных цен и наличия. Фильтры платформы, цены, скидок и региона не применяются.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
+  const unavailable=r.offline?`<div class="catalog-status" role="status" title="${esc(offlineReason)}">${I('alert')}<span>Steam недоступен. Показана локальная подборка без актуальных цен и наличия. Цены, скидки, режимы и сроки релиза не подтверждены.</span>${btn('Повторить','rerender','refresh')}</div>`:'';
   const list=rows.length?`<div class="catalog-list">${rows.map(g=>{
    const meta=catalogMeta(g), price=g.price||'', badge=badgesFor(g);
-   return `<button type="button" class="catalog-row" data-action="catalog-game" data-image="${esc(g.image||'')}" data-title="${esc(g.title)}" title="Открыть ${esc(g.title)}"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
+   return `<button type="button" class="catalog-row" data-action="catalog-game" data-url="${esc(g.url||'')}" data-image="${esc(g.image||'')}" data-title="${esc(g.title)}" title="Открыть ${esc(g.title)}"><span class="catalog-row-art">${I('game')}${g.image?`<img src="${esc(g.image)}" alt="" loading="lazy">`:''}</span><span class="catalog-row-copy"><strong>${esc(g.title)}</strong>${meta.length?`<span class="catalog-meta">${esc(meta.join(', '))}</span>`:''}<span class="catalog-badges">${badge}</span></span>${price?`<span class="catalog-price">${g.discount?`<b class="discount">${esc(g.discount)}</b>`:''}${esc(price)}</span>`:''}</button>`;
   }).join('')}</div>`:details('search',refined?'Нет совпадений на этой странице':'Ничего не найдено',refined?'Измените фильтры года и источников или перейдите к другой странице.':'Попробуйте изменить запрос или фильтры.');
   results.setAttribute('aria-busy','false');results.innerHTML=unavailable+list+(r.total>r.pageSize&&!r.offline?rangeButtons(r,'steam'):'');
   if(keys!==shownKeys)reveal(results,'.catalog-row,.empty','rise',{limit:9,step:22});
@@ -158,7 +179,7 @@ async function catalog(n){
  form.onsubmit=e=>{
   e.preventDefault();const d=new FormData(form), checked=d.getAll('steamTag');
   if(checked.length>10){toast('Выберите не больше 10 жанров и тегов.',true);return;}
-  state.filter={...Object.fromEntries(['term','category1','os','maxprice','sort_by','cc'].map(k=>[k,d.get(k)])),tags:checked.join(','),specials:d.has('specials'),page:1};
+  state.filter={...Object.fromEntries(['term','category1','os','maxprice','sort_by','cc','coop'].map(k=>[k,d.get(k)])),tags:checked.join(','),specials:d.has('specials'),hideAddons:d.has('hideAddons'),comingSoon:d.has('comingSoon'),page:1};
   window.scrollTo(0,0);run(render);
  };
  form.querySelectorAll('[data-era]').forEach(b=>b.onclick=()=>{
@@ -215,15 +236,20 @@ function rankings(){
 const gameProgress=[['planned','Хочу пройти'],['playing','Играю'],['finished','Пройдено'],['shelved','Отложено']];
 const gameProgressLabel=Object.fromEntries(gameProgress);
 const gamesTools=libraryTools({api,dialog,showDialog,esc,icon:I,notify:toast,refreshLibrary,humanBytes});
+const homeLayout=setupHomeLayout({dialog,showDialog,btn,get:()=>state.settings,save:applySaved,render,run,toast});
+function setRuntime(value){appearanceRuntime=value;applyTheme();const button=$('[data-action=safe-appearance]');if(button)button.lastChild.textContent=value.safe?' Восстановить оформление':' Классический режим';}
+const filesTools=fileTools({api,dialog,showDialog,esc,btn,run,toast,library:()=>state.library,refresh:refreshLibrary,
+ refreshSettings:async()=>{state.settings=await api.settings();applyTheme();sidebar();if(state.section==='settings')await render();},
+ bytes:humanBytes,getRuntime:()=>appearanceRuntime,setRuntime});
 const libraryWave=makeLibraryWave({api,dialog,showDialog,esc,btn,get:()=>state.library,refresh:refreshLibrary,run,notify:toast});
 const journalView=makeJournalView({api,content,showDialog,dialog,esc,icon:I,head,btn,getLibrary:()=>state.library,exportFile,run,notify:toast,isCurrent:current});
 function library(){
  const collections=[...new Set(state.library.flatMap(g=>g.collections))].sort((a,b)=>a.localeCompare(b,'ru'));
  let rows=state.library.filter(g=>(state.libraryFilter==='all'||(state.libraryFilter==='fav'&&g.favorite)||(state.libraryFilter==='recent'&&g.lastPlayed))&&(!state.collection||g.collections.includes(state.collection))&&(!state.libraryProgress||g.progress===state.libraryProgress));
  if(state.libraryFilter==='recent')rows.sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed));
- content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${api.saveBatch?btn('Массовое редактирование','library-batch','edit'):''}${api.previewMove?btn('Исправить пути','library-move','folder'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
+ content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${api.saveBatch?btn('Массовое редактирование','library-batch','edit'):''}${api.previewMove?btn('Исправить пути','library-move','folder'):''}${api.exportCollection?btn('Поделиться коллекцией','collection-share','external'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
  <div class="toolbar"><div class="tabs">${[['all','game','Все игры'],['fav','star','Избранное'],['recent','clock','Недавние']].map(([k,g,l])=>`<button class="tab ${state.libraryFilter===k?'selected':''}" data-action="library-tab" data-tab="${k}">${I(g)}${l}</button>`).join('')}</div><div class="row">${pick('collection',[['','Все коллекции'],...collections.map(c=>[c,c])],state.collection,'Коллекция')}${pick('library-progress',[['','Любой статус'],...gameProgress],state.libraryProgress,'Статус прохождения')}</div></div>
- ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}${(g.tags||[]).map(c=>`<span class="chip">#${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>${api.screenshots?`<button class="btn" data-action="game-screenshots" data-id="${esc(g.id)}">Скриншоты</button>`:''}`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
+ ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}${(g.tags||[]).map(c=>`<span class="chip">#${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>${g.exe&&api.requiredFiles?`<button class="btn" data-action="game-required" data-id="${esc(g.id)}">Проверка файлов</button>`:''}${api.syncFolder?`<button class="btn" data-action="game-sync" data-id="${esc(g.id)}">Копии в папку</button>`:''}${api.screenshots?`<button class="btn" data-action="game-screenshots" data-id="${esc(g.id)}">Скриншоты</button>`:''}`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
  $('[name="collection"]').onchange=e=>{state.collection=e.target.value;run(render);};
  $('[name="library-progress"]').onchange=e=>{state.libraryProgress=e.target.value;run(render);};
 }
@@ -247,7 +273,7 @@ function continueGame(g){
 }
 async function launch(id,p){await api.launchGame(id,p);await refreshLibrary();toast('Игра запущена.');}
 function downloads(n){
- const tools=`${api.checkDownload?btn('Проверить скачивание','download-check','check'):''}${api.saveDownloadOptions?btn('Настройки очереди','download-options','sliders'):''}${btn('Добавить загрузку','new-download','plus','primary')}`;
+ const tools=`${api.checkDownload?btn('Проверить скачивание','download-check','check'):''}${api.saveDownloadOptions?btn('Настройки очереди','download-options','sliders'):''}${api.cleanupPreview?btn('Очистка временных','temp-files','folder'):''}${btn('Добавить загрузку','new-download','plus','primary')}`;
  content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками.',tools)}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div class="download-overview" id="dl-overview"></div><div class="tabs download-tabs" aria-label="Вкладки загрузок">${[['active','Очередь'],['history','История']].map(([id,label])=>`<button type="button" class="tab ${state.downloadTab===id?'selected':''}" aria-pressed="${state.downloadTab===id}" data-action="download-tab" data-tab="${id}">${I(id==='active'?'download':'clock')} ${label}</button>`).join('')}</div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
  run(()=>refreshDownloads(n));
 }
@@ -319,7 +345,7 @@ function addDownloadDialog(){
  });};
 }
 async function sources(n){
- content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',`${api.connectOnlineFix?btn('Подключить OnlineFix','source-onlinefix','link'): ''}${api.auditSources?btn('Проверить все источники','source-audit','refresh','primary'):''}${btn('Из файла','source-file','file')}`)}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}</form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div>${api.retrySourceLists?btn('Повторить загрузку списков','source-retry','refresh'):''}</div><div id="sources-list"></div>`;
+ content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',`${api.connectOnlineFix?btn('Подключить OnlineFix','source-onlinefix','link'): ''}${api.auditSources?btn('Проверить все источники','source-audit','refresh','primary'):''}${btn('Из файла','source-file','file')}${api.sourceBulkPreview?btn('Импорт нескольких','source-bulk','plus'):''}${api.sourceWorkbench?btn('Мои списки','source-work','star'):''}`)}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}<label class="toggle"><input name="grouped" type="checkbox" ${state.srcGrouped?'checked':''}> Группировать версии</label></form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div>${api.retrySourceLists?btn('Повторить загрузку списков','source-retry','refresh'):''}</div><div id="sources-list"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
  form.onsubmit=async e=>{
   e.preventDefault();
@@ -331,8 +357,8 @@ async function sources(n){
   finally{submit.disabled=false;}
  };
  const search=$('#source-search');
- search.onsubmit=e=>{e.preventDefault();const data=new FormData(search);state.srcTerm=String(data.get('term')||'').trim();state.srcId=String(data.get('sourceId')||'');state.srcPage=1;run(()=>loadSourceGames(n));};
- $('[name=sourceId]',search).onchange=()=>search.requestSubmit();
+ search.onsubmit=e=>{e.preventDefault();const data=new FormData(search);state.srcTerm=String(data.get('term')||'').trim();state.srcId=String(data.get('sourceId')||'');state.srcGrouped=data.has('grouped');state.srcPage=1;run(()=>loadSourceGames(n));};
+ $('[name=sourceId]',search).onchange=$('[name=grouped]',search).onchange=()=>search.requestSubmit();
  await refreshSourceList(n);
  await loadSourceGames(n);
 }
@@ -350,7 +376,7 @@ async function refreshSourceList(n){
  const select=$('#source-search [name=sourceId]');
  const opts='<option value="">Все включённые источники</option>'+list.filter(s=>s.enabled).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
  if(select&&select._markup!==opts){select.innerHTML=opts;select._markup=opts;select.value=state.srcId;if(select.value!==state.srcId){state.srcId='';select.value='';state.srcPage=1;}}
- const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.primaryOnlineFix?' <span class="chip">Основной OnlineFix</span>':''}${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],...(api.replaceSource?[['replace','Заменить список']]:[]),['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
+ const html=list.length?`<div class="item-list">${list.map(s=>`<article class="list-item"><span class="list-icon">${I(s.kind==='url'?'link':'file')}</span><div class="list-copy"><h3>${esc(s.name)} <span class="chip ${s.enabled?'good':''}">${s.enabled?'Включён':'Отключён'}</span>${s.primaryOnlineFix?' <span class="chip">Основной OnlineFix</span>':''}${s.presetName?' <span class="chip">Предустановлен</span>':''}</h3><p>${esc(sourceStatus(s))}</p><p>${esc(s.url||s.file)}</p></div><div class="item-actions">${[['toggle',s.enabled?'Отключить':'Включить'],['refresh','Обновить'],...(api.replaceSource?[['replace','Заменить список']]:[]),...(api.sourceHistory?[['manage','Настройки списка']]:[]),['remove','Удалить']].map(([op,label])=>`<button class="btn" data-action="source-op" data-op="${op}" data-id="${esc(s.id)}" ${op==='refresh'&&s.loading?'disabled':''}>${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('layers','Источники не подключены','Добавьте свой JSON-файл или ссылку на него, чтобы искать игры.');
  if(target._markup===html)return false;
  const focus=target.contains(document.activeElement)?document.activeElement.dataset:null;
  const entering=target._markup===undefined;
@@ -363,12 +389,12 @@ setInterval(()=>{if(window.byazen&&state.section==='sources'){const n=renderId;r
 let sourceRead=0, shownSourceGames=[];
 async function loadSourceGames(n){
  const task=++sourceRead;
- const result=await api.searchSources(state.srcTerm,state.srcPage,state.srcId);if(!current(n)||task!==sourceRead)return;
+ const result=await api.searchSources(state.srcTerm,state.srcPage,state.srcId,state.srcGrouped?'grouped':'');if(!current(n)||task!==sourceRead)return;
  state.srcPage=result.page;
  shownSourceGames=result.games;
  const last=Math.max(1,Math.ceil(result.total/result.pageSize));
  const pager=last>1?`<form class="source-jump" aria-label="Переход к странице"><label>Страница <input type="number" name="page" min="1" max="${last}" value="${result.page}" required></label><button class="btn" type="submit">Перейти</button></form>`:'';
- let html=result.games.length?`<div class="source-results-overview"><p>Доступно записей: ${result.total.toLocaleString('ru')}</p>${pager}</div><div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
+ let html=result.games.length?`<div class="source-results-overview"><p>${result.grouped?'Групп игр':'Доступно записей'}: ${result.total.toLocaleString('ru')}</p>${pager}</div><div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.sourceNames?`${esc(g.sourceNames.join(', '))} · ${g.versions} версий`:[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><div class="item-actions"><button class="btn" data-action="source-links" data-index="${i}">${I('link')} ${g.versions?'Версии':`Ссылки (${g.links.length})`}</button>${api.sourceWorkbenchChange&&!g.versions?`<button type="button" class="icon-btn" aria-label="В закладки" data-action="source-bookmark" data-index="${i}">${I('star')}</button>`:''}</div></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
  if(!result.games.length)html=state.srcTerm?details('search','Ничего не найдено','Попробуйте часть названия или оригинальное название. Проверьте, что нужный источник включён и его список загрузился.',btn('Показать все игры','browse-sources','layers')):details('layers','Пока нет загруженных записей','Статус загрузки каждого списка указан ниже.');
  const target=$('#source-games');
  if(target._markup!==html){target.innerHTML=html;target._markup=html;reveal(target,'.item-list > .list-item,.empty','rise');}
@@ -420,7 +446,8 @@ function searchInSources(term){
 function openCatalogGame(product){
  if(!product)return;
  const version=renderId;
- openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{state.downloadTab='active';go('downloads');toast('Загрузка добавлена.');}});
+ const steamId=productId(product.url);
+ openDownloadPicker(product,{api,dialog,showDialog,esc,date,onDetails:steamId&&api.steamDetail?()=>run(()=>catTools.detail(steamId)):null,onBookmark:api.sourceWorkbenchChange?(id,entry)=>run(async()=>{await api.sourceWorkbenchChange('bookmark',{id,index:entry.index,title:entry.title});toast('Версия добавлена в закладки.');}):null,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{state.downloadTab='active';go('downloads');toast('Загрузка добавлена.');}});
 }
 function setWallpaper(record){
  if(state.wallpaper?.blob!==record?.blob){
@@ -429,11 +456,13 @@ function setWallpaper(record){
  }
  state.wallpaper=record;
 }
-function currentTheme(){return getTheme(wallpaperTheme(cleanPersonal(state.settings.personal),state.section,state.settings.theme));}
+function currentTheme(){return appearanceRuntime.safe?getTheme('dark'):getTheme(wallpaperTheme(cleanPersonal(state.settings.personal),state.section,state.settings.theme));}
 function applyTheme(){
- const personal=cleanPersonal(state.settings.personal),theme=currentTheme(),root=document.documentElement;
+ const personal=cleanPersonal(appearanceRuntime.safe?null:state.settings.personal),theme=currentTheme(),root=document.documentElement;
+ const suppress=appearanceRuntime.safe||personal.autoEffects&&(appearanceRuntime.battery||appearanceRuntime.playing);
+ root.dataset.safeAppearance=String(appearanceRuntime.safe);
  const staged=Boolean(personal.sectionThemes[state.section]||personal.schedule.enabled);
- const custom=!staged&&(slideURL||state.wallpaper?.enabled&&customURL);
+ const custom=!appearanceRuntime.safe&&!staged&&(slideURL||state.wallpaper?.enabled&&customURL);
  for(const key of ['tv','compact','contrast','parallax'])root.dataset[key]=String(personal[key]);
  root.style.setProperty('--app-zoom',personal.uiScale/100);
  root.style.setProperty('--text-zoom',personal.textScale/100);
@@ -441,8 +470,8 @@ function applyTheme(){
  root.dataset.themeGroup=custom?'custom':(theme.atmosphere||theme.group);
  root.style.setProperty('--hue',theme.hue);
  root.style.setProperty('--second-hue',theme.alt);
- applyAppearance(root,state.settings.appearance);
- root.classList.toggle('motion-off',state.settings.motion);syncMotion();
+ applyAppearance(root,appearanceRuntime.safe?{effects:0}:state.settings.appearance);
+ root.classList.toggle('motion-off',Boolean(state.settings.motion||suppress));syncMotion();
  const wall=$('#theme-wall'),image=$('#theme-wall-image'),src=custom||theme.asset;
  wall.dataset.art=custom?'custom':(theme.art||'vector');
  wall.dataset.fit=custom&&!slideURL?state.wallpaper.fit:'cover';
@@ -615,12 +644,13 @@ async function openNotifications(){
  const saved=api.notifications?await api.notifications():[];
  const rows=[...saved,...sessionNotices].sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,80);
  $('#notice-shortcut').dataset.new='false';
- showDialog('Уведомления',`<section id="notice-history"><ul class="journal-list">${rows.map(n=>`<li><div><strong>${esc(n.title)}</strong><p class="muted small">${esc(n.detail)} · ${esc(new Date(n.at).toLocaleString('ru'))}</p></div>${['sources','downloads'].includes(n.target)?`<button type="button" class="btn" data-go="${n.target}">Открыть</button>`:''}</li>`).join('')||'<li class="muted">Новых уведомлений нет.</li>'}</ul><div class="dialog-actions">${rows.length?'<button type="button" class="btn" id="clear-notices">Очистить историю</button>':''}${btn('Закрыть','close')}</div></section>`);
+ showDialog('Уведомления',`<section id="notice-history"><ul class="journal-list">${rows.map(n=>`<li><div><strong>${esc(n.title)}</strong><p class="muted small">${esc(n.detail)} · ${esc(new Date(n.at).toLocaleString('ru'))}</p></div>${['sources','downloads','catalog'].includes(n.target)?`<button type="button" class="btn" data-go="${n.target}">Открыть</button>`:''}</li>`).join('')||'<li class="muted">Новых уведомлений нет.</li>'}</ul><div class="dialog-actions">${rows.length?'<button type="button" class="btn" id="clear-notices">Очистить историю</button>':''}${btn('Закрыть','close')}</div></section>`);
  const clear=$('#clear-notices');if(clear)clear.onclick=()=>run(async()=>{await api.clearNotifications?.();sessionNotices=[];localStorage.removeItem('byazen-ui-alerts');await openNotifications();});
 }
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
  <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button>${btn('Оформление и управление','personal-settings','sliders')}${btn('Что нового','release-notes','spark')}</div>
+ <div class="row settings-workbench">${api.statusCenter?btn('Центр состояния','health-center','check'):''}${api.diskReport?btn('Отчёт по месту','disk-report','folder'):''}${api.migrationExport?btn('Переезд на другой ПК','migration','file'):''}${api.syncFolder?btn('Папка синхронизации','sync-folder','folder'):''}${btn(appearanceRuntime.safe?'Восстановить оформление':'Классический режим','safe-appearance','alert')}</div>
  <section class="theme-pane" id="themes" aria-label="Галерея тем" tabindex="-1"></section>
  <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label><label class="field"><span>Открывать при запуске</span>${pick('startSection',[['home','Главная'],['library','Библиотека'],['catalog','Каталог'],['downloads','Загрузки'],['sources','Источники'],['rankings','Рейтинги'],['journal','Журнал']],state.settings.startSection||'home','Открывать при запуске')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
  drawThemes();
@@ -637,9 +667,26 @@ async function dispatch(b){
  if(a?.startsWith('steam-')&&/^steam-\d+$/.test(a)){const game=games.find(x=>x.id===Number(a.split('-')[1]));if(game)return openCatalogGame({...game,image:'assets/'+game.image+'.jpg'});}
  switch(a){
   case 'close':dialog.close();break;
+  case 'home-config':return homeLayout();
+  case 'collection-share':return filesTools.share();
+  case 'game-required':if(g)return filesTools.required(g);break;
+  case 'game-sync':if(g)return filesTools.sync(g);break;
+  case 'disk-report':return filesTools.space();
+  case 'temp-files':return filesTools.clean();
+  case 'migration':return filesTools.migrate();
+  case 'sync-folder':return filesTools.sync();
+  case 'health-center':return filesTools.health();
+  case 'safe-appearance':return filesTools.safe();
   case 'home-tab':state.tab=Number(d.tab);return render('home-tab');
   case 'surprise':selectHero((state.featured+1+Math.floor(Math.random()*(games.length-1)))%games.length);$('.hero')?.scrollIntoView({block:'nearest'});break;
-  case 'catalog-game':return openCatalogGame({title:d.title,image:d.image});
+  case 'catalog-game':return openCatalogGame({title:d.title,image:d.image,url:d.url});
+  case 'catalog-saved':return catTools.filters();
+  case 'catalog-wishes':return catTools.wishes();
+  case 'catalog-releases':return catTools.wishes(true);
+  case 'catalog-compare':return catTools.compare();
+  case 'source-bulk':return feedsTools.bulk();
+  case 'source-work':return feedsTools.dashboard();
+  case 'source-bookmark':{const row=shownSourceGames[Number(d.index)];if(row){await api.sourceWorkbenchChange('bookmark',{id:row.id,index:row.index,title:row.title});toast('Версия добавлена в закладки.');}break;}
   case 'steam-charts':return api.openSteamCharts();
   case 'review-catalog':state.filter={term:'',page:1,category1:'998',sort_by:'Reviews_DESC'};return go('catalog');
   case 'feedback':return showDialog('Обратная связь',`<p class="muted">Сообщите об ошибке или предложите улучшение. Откроется форма GitHub — ByAzen ничего не отправляет автоматически.</p><div class="dialog-actions">${btn('Открыть форму','feedback-open','external','primary')}</div>`);
@@ -649,7 +696,7 @@ async function dispatch(b){
   case 'rerender':return render();
   case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
   case 'search-sources':return searchInSources(state.filter.term);
-  case 'catalog-feed-game':{const game=catalogFeedGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
+  case 'catalog-feed-game':{const game=catalogFeedGames[Number(d.index)];if(game)return openCatalogGame({title:game.groupTitle||game.title,preferred:game});break;}
   case 'browse-sources':return searchInSources('');
   case 'source-page':return switchSourcePage(Number(d.page));
   case 'library-tab':state.libraryFilter=d.tab;return render();
@@ -710,9 +757,9 @@ async function dispatch(b){
    break;
   }
   case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
-  case 'source-op':if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
-  case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
-  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.24',`<ul class="release-list"><li>Слайд-шоу, расписание и фоны по разделам, свой звук, заставки и переносимые пакеты оформления.</li><li>Журнал: время, планы, события и статистика с экспортом.</li><li>Управление геймпадом, размер интерфейса, системный трей и история уведомлений.</li></ul><h3>В версии 1.0.23</h3><ul class="release-list"><li><strong>Библиотека:</strong> поиск EXE и импорт установленных игр Steam.</li><li><strong>Сохранения:</strong> папки игры, копирование перед запуском и восстановление с предпросмотром.</li><li><strong>Оформление:</strong> живой редактор палитры, скруглений и шрифта; интенсивность эффектов.</li></ul><h3>В версии 1.0.22</h3><ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
+  case 'source-op':if(d.op==='manage')return feedsTools.manage(d.id);if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
+  case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.groupTitle||game.title,preferred:game});break;}
+  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.25',`<ul class="release-list"><li>Поиск по ByAzen, карточки Steam, сравнение, желаемое, скидки и календарь.</li><li>Настройки источников: история, закладки, группировка, связи, выгрузка и пакетный импорт.</li><li>Переезд, отчёт по месту, проверка файлов, безопасное оформление, виджеты и карточка коллекции.</li></ul><h3>В версии 1.0.24</h3><ul class="release-list"><li>Слайд-шоу, расписание и фоны по разделам, свой звук, заставки и переносимые пакеты оформления.</li><li>Журнал: время, планы, события и статистика с экспортом.</li><li>Управление геймпадом, размер интерфейса, системный трей и история уведомлений.</li></ul><h3>В версии 1.0.23</h3><ul class="release-list"><li><strong>Библиотека:</strong> поиск EXE и импорт установленных игр Steam.</li><li><strong>Сохранения:</strong> папки игры, копирование перед запуском и восстановление с предпросмотром.</li><li><strong>Оформление:</strong> живой редактор палитры, скруглений и шрифта; интенсивность эффектов.</li></ul><h3>В версии 1.0.22</h3><ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
   case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
   case 'theme-editor':return themeEditor();
   case 'theme-preview':return previewTheme(d.themeId);
@@ -756,10 +803,10 @@ async function dispatch(b){
   }
  }
 }
-document.addEventListener('click',e=>{const click=e.target.closest('button');const p=state.settings.personal;if(click&&!click.disabled&&p?.sound)void themeTone(p.sound,p.volume);const b=click?.matches('[data-action],[data-go]')&&click;if(b&&!b.disabled)run(()=>dispatch(b));});
+document.addEventListener('click',e=>{const click=e.target.closest('button');const p=state.settings.personal;if(click&&!click.disabled&&!appearanceRuntime.safe&&p?.sound)void themeTone(p.sound,p.volume);const b=click?.matches('[data-action],[data-go]')&&click;if(b&&!b.disabled)run(()=>dispatch(b));});
 $('#profile').onclick=()=>go('settings');
 $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('sliders');
-$('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
+$('#global-search').onsubmit=e=>{e.preventDefault();catTools.global($('#global-input').value);};
 const gamepad=setupGamepad({dialog,get:()=>state.settings,go});gamepad.start();
 document.addEventListener('keydown',e=>{
  if(dialog.open||e.repeat)return;
@@ -770,8 +817,9 @@ document.addEventListener('keydown',e=>{
 });
 $('#notice-shortcut').innerHTML=I('notice');
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-api.onNoticeChanged?.(()=>{const button=$('#notice-shortcut');button.dataset.new='true';const p=state.settings.personal;if(p?.sound)void themeTone(p.sound,p.volume,'notice');});
+api.onNoticeChanged?.(()=>{const button=$('#notice-shortcut');button.dataset.new='true';const p=state.settings.personal;if(!appearanceRuntime.safe&&p?.sound)void themeTone(p.sound,p.volume,'notice');});
 api.onGoSection?.(section=>go(section));
+api.onAppearanceRuntime?.(value=>setRuntime(value));
 let pointer=0,pointerX=0,pointerY=0;
 document.addEventListener('pointermove',e=>{
  if(!state.settings.personal?.parallax||!motionAllowed()||e.pointerType!=='mouse')return;
@@ -784,6 +832,7 @@ setInterval(()=>{if(document.hidden)return;
 },1000);
 run(async()=>{try{
  state.settings=await api.settings();
+ if(api.appearanceRuntime)appearanceRuntime=await api.appearanceRuntime();
  const [wallpaper,slides]=await Promise.all([readWallpaper().catch(()=>null),slideshowIO.read().catch(()=>[])]);
  setWallpaper(wallpaper);state.slides=slides;selectSlide(0);applyTheme();showIntro(cleanPersonal(state.settings.personal).intro);
  state.library=await api.library();

@@ -1,3 +1,4 @@
+import {parseQuery,matchesQuery} from './query.js';
 // Exact game lookup tolerates recognized release metadata, not arbitrary title prefixes.
 const normalize = text => text.replace(/[™®©]/gu,'').normalize('NFKC').toLowerCase().replace(/ё/g,'е').trim();
 const words = text => normalize(text).match(/[\p{L}\p{N}]+/gu)||[];
@@ -74,7 +75,7 @@ function titleInfo(text){
  const keys=[base,...bilingual(base)].map(sequelKey).filter(Boolean);
  const aliases=[...new Set(keys.flatMap(key=>[key,accentKey(key),...(nameEquivalents.get(key)||[])]))];
  const soft=softKey(base);
- return {exact,aliases,terms:words(text),soft,numbers:soft.match(/\d+/g)?.join(',')||''};
+ return {exact,aliases,baseKey:words(base).join(' '),terms:words(text),soft,numbers:soft.match(/\d+/g)?.join(',')||''};
 }
 const cache=new WeakMap();
 function indexFor(games){
@@ -161,6 +162,7 @@ export function searchSources(sources,query='',page=1,sourceId='',mode=''){
  const raw=typeof query==='string'?query.slice(0,200).trim():'';
  const requested=Number.isSafeInteger(page)&&page>=1?page:1, limit=16;
  const active=sources.filter(s=>s.enabled&&(!sourceId||s.id===sourceId));
+ const conditions=mode!=='related'?parseQuery(raw):null;
  const main=prepareQuery(raw), keyboard=otherKeyboard(raw), alternate=keyboard?prepareQuery(keyboard):null;
  const suggestions=mode==='related';
  if(suggestions&&!main.exact)return {games:[],total:0,page:1,pageSize:limit};
@@ -178,6 +180,7 @@ export function searchSources(sources,query='',page=1,sourceId='',mode=''){
   return {games,total,page,pageSize:limit};
  }
  const rankOf=doc=>{
+  if(conditions)return matchesQuery(doc.terms,conditions)?0:-1;
   const rank=searchScore(doc,main);
   if(rank>=0)return rank;
   if(alternate?.tokens.some(t=>!t.numeric)&&searchScore(doc,alternate)>=0)return 3;
@@ -213,4 +216,26 @@ export function searchSources(sources,query='',page=1,sourceId='',mode=''){
 export function searchCoverage(games){
  const {docs}=indexFor(games);
  return {browsable:docs.length,searchable:docs.reduce((n,doc)=>n+Number(Boolean(doc.exact)),0)};
+}
+
+// Group release variants without guessing equivalences between different titles.
+export const releaseKey=title=>words(stripRelease(title)).join(' ');
+export function groupSources(sources,raw='',page=1,sourceId='',aliases=[]){
+ const conditions=parseQuery(raw),query=prepareQuery(validTitle(raw)?raw:''),groups=new Map(),manual=new Map();
+ for(const pair of aliases){const a=releaseKey(pair[0]),b=releaseKey(pair[1]);if(a&&b)manual.set(b,a);}
+ for(const source of sources){
+  if(!source.enabled||sourceId&&source.id!==sourceId)continue;
+  for(const doc of indexFor(source.games).docs){
+   const game=source.games[doc.i],base=doc.baseKey||game.title;
+   if(conditions?!matchesQuery(doc.terms,conditions):query.exact&&searchScore(doc,query)<0&&!similarTitle(doc,query)&&!manual.has(base))continue;
+   const key=manual.get(base)||base;
+   if(query.exact&&!conditions&&manual.has(base)&&searchScore(doc,query)<0&&prepareQuery(key).exact!==query.exact)continue;
+   let entry=groups.get(key);
+   if(!entry){entry={key,count:0,names:new Set(),source,index:doc.i};groups.set(key,entry);}
+   entry.count++;entry.names.add(source.name);
+  }
+ }
+ const limit=16,total=groups.size,p=Math.min(Number.isSafeInteger(page)&&page>0?page:1,Math.max(1,Math.ceil(total/limit)));let i=0;
+ const games=[];for(const row of groups.values()){if(i++<(p-1)*limit)continue;games.push({...gameRow(row.source,row.index),groupTitle:row.key,sourceNames:[...row.names],versions:row.count});if(games.length>=limit)break;}
+ return {games,total,page:p,pageSize:limit,grouped:true};
 }

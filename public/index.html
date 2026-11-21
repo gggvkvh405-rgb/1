@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: https://*.steamstatic.com https://steamcdn-a.akamaihd.net; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: https://*.steamstatic.com https://steamcdn-a.akamaihd.net; connect-src 'self'; media-src https://*.steamstatic.com https://steamcdn-a.akamaihd.net; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#101010">
 <title>ByAzen — игровой лаунчер</title>
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="library-tools.css">
 <link rel="stylesheet" href="appearance.css">
 <link rel="stylesheet" href="personal.css">
+<link rel="stylesheet" href="workbench.css">
 <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -26,7 +27,7 @@
     <nav aria-label="Главная навигация">
       <div id="nav"></div>
       <div class="side-tools">
-        <form class="global-search" id="global-search"><input type="search" id="global-input" aria-label="Поиск игр" placeholder="Поиск" maxlength="100" title="Поиск в Steam и источниках (Ctrl+K)"></form>
+        <form class="global-search" id="global-search"><input type="search" id="global-input" aria-label="Поиск игр" placeholder="Поиск" maxlength="200" title="Поиск по ByAzen (Ctrl+K)"></form>
         <button class="quick-button" id="source-shortcut" data-go="sources" aria-label="Источники" title="Источники"></button>
         <button class="quick-button" id="filter-shortcut" data-go="catalog" aria-label="Фильтры каталога" title="Фильтры каталога"></button>
       </div>

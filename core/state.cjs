@@ -1,3 +1,6 @@
+const {cleanHome}=require('../public/home-layout.js');
+const {cleanStore}=require('./steam-detail.cjs');
+const {cleanWorkbench}=require('./source-workbench.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const {searchSources,availability,sourceMatches} = require('../public/source-search.js');
@@ -13,6 +16,7 @@ function updateSettings(raw = {}) {
   return {name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0,32) : defaults.name,
     theme: isTheme(raw.theme) ? raw.theme : defaults.theme,
     personal:cleanPersonal(raw.personal),
+    homeWidgets:cleanHome(raw.homeWidgets),
     appearance:cleanAppearance(raw.appearance),
     favoriteThemes:[...new Set((Array.isArray(raw.favoriteThemes)?raw.favoriteThemes:[]).slice(0,150).filter(t=>isTheme(t)&&!classicIds.has(t)))],
     startSection:startSections.has(raw.startSection)?raw.startSection:'home',
@@ -21,7 +25,7 @@ function updateSettings(raw = {}) {
 function readState(file) {
   let data = {};
   try { data = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch(e) { if (e.code !== 'ENOENT') throw Error('Не удалось прочитать файл данных: ' + e.message); }
-  return {settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], sourcePresetRevision:data.sourcePresetRevision || 0, downloads:data.downloads || [], downloadOptions:transferOptions(data.downloadOptions),journal:cleanJournal(data.journal),notifications:Array.isArray(data.notifications)?data.notifications.slice(0,80):[]};
+  return {settings:updateSettings(data.settings), library:data.library || [], sources:data.sources || [], sourcePresetRevision:data.sourcePresetRevision || 0, downloads:data.downloads || [], downloadOptions:transferOptions(data.downloadOptions),journal:cleanJournal(data.journal),sourceWorkbench:cleanWorkbench(data.sourceWorkbench),steamDesk:cleanStore(data.steamDesk),syncFolder:typeof data.syncFolder==='string'?data.syncFolder.slice(0,1000):'',notifications:Array.isArray(data.notifications)?data.notifications.slice(0,80):[]};
 }
 function saveState(file,data) {
   fs.mkdirSync(path.dirname(file),{recursive:true});

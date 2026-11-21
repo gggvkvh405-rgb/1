@@ -1,5 +1,5 @@
 import {localDay} from './journal.js';
-import {searchSources,availability,sourceMatches} from './source-search.js';
+import {searchSources,availability,sourceMatches,groupSources} from './source-search.js';
 const read = () => {try {return JSON.parse(localStorage.getItem('byazen-preview-v1')) || {};} catch {return {};}};
 const store = read();
 store.settings ||= {name:'Игрок',theme:'dark',motion:false,region:'DE'};
@@ -32,6 +32,7 @@ const ext = url => { window.open(url,'_blank','noopener,noreferrer'); };
 export const browser = {
  settings:async()=>store.settings, saveSettings:async x=>{store.settings=x; save(); return x;},
  steam:async x=>api('steam',x),
+ steamDetail:async(id,cc)=>api('steam-detail',{id,cc}),
  openSteamCharts:async()=>ext('https://store.steampowered.com/charts/topselling'),
  openProjectFeedback:async()=>ext('https://github.com/gggvkvh405-rgb/1/issues/new'),
  library:async()=>store.library,
@@ -44,7 +45,7 @@ export const browser = {
  importSource:async id=>{if(store.sources.length>=20)throw Error('Можно добавить до 20 источников.'); if(!drafts.has(id))throw Error('Откройте предпросмотр повторно.');store.sources.push({...drafts.get(id),id:crypto.randomUUID(),enabled:true,updated:new Date().toISOString()});save();drafts.delete(id);},
  sources:async()=>store.sources.map(({games,...r})=>({...r,count:games.length})),
  sourceAction:async(id,op)=>{const s=store.sources.find(x=>x.id===id);if(op==='toggle')s.enabled=!s.enabled;else if(op==='remove')store.sources=store.sources.filter(s=>s.id!==id);else if(s.kind==='url')Object.assign(s,await api('source',await fetchSource(s.url)),{updated:new Date().toISOString()});else throw Error('Для обновления файла удалите запись и импортируйте файл повторно, либо используйте настольное приложение.');save();},
- searchSources:async (q,page,id,mode)=>searchSources(store.sources,q,page,id,mode),
+ searchSources:async (q,page,id,mode)=>mode==='grouped'?groupSources(store.sources,q,page,id):searchSources(store.sources,q,page,id,mode),
  availability:async titles=>availability(store.sources,titles),
  sourceMatches:async title=>sourceMatches(store.sources,title),
  sourceGame:async(id,index,title)=>{

@@ -20,7 +20,7 @@ export function cleanPersonal(raw={}){
  }
  const schedule=raw?.schedule;
  return {sectionThemes,nav,keys,schedule:{enabled:schedule?.enabled===true,time:typeof schedule?.time==='string'&&clockRx.test(schedule.time)?schedule.time:'20:00',day:theme(schedule?.day)||'light',night:theme(schedule?.night)||'oled'},
-  parallax:raw?.parallax===true,tv:raw?.tv===true,gamepad:raw?.gamepad===true,contrast:raw?.contrast===true,compact:raw?.compact===true,tray:raw?.tray===true,
+  autoEffects:raw?.autoEffects===true,parallax:raw?.parallax===true,tv:raw?.tv===true,gamepad:raw?.gamepad===true,contrast:raw?.contrast===true,compact:raw?.compact===true,tray:raw?.tray===true,
   uiScale:b(raw?.uiScale,75,150,100),textScale:b(raw?.textScale,85,135,100),slideSeconds:b(raw?.slideSeconds,5,180,25),
   sound:soundNames.has(raw?.sound)?raw.sound:'off',volume:b(raw?.volume,0,100,25),intro:intros.has(raw?.intro)?raw.intro:'off'};
 }

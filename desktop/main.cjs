@@ -1,4 +1,8 @@
-const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session, clipboard, Tray, Menu, nativeImage} = require('electron');
+const {maxMigration,migrationExport,readMigration,freshCards,adoptMigration,cleanRequired,verifyFiles,diskReport,previewCleanup,cleanup,collectionHTML}=require('../core/file-workbench.cjs');
+const {createSteamDetails,saveWish,wishMonitor}=require('../core/steam-detail.cjs');
+const {configure,createSourceWorkbench,sortedSources,matchesWithAliases,sourceExport}=require('../core/source-workbench.cjs');
+const {groupSources}=require('../public/source-search.js');
+const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session, clipboard, Tray, Menu, nativeImage, powerMonitor} = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const {randomUUID} = require('node:crypto');
@@ -14,8 +18,8 @@ const {updateBatch,prepareMove,applyMove,findScreenshots,readScreenshot}=require
 const {cleanDate,localDay}=require('../public/journal.js');
 const {checkDownload}=require('../core/download-check.cjs');
 const {SaveBackups}=require('../core/save-backups.cjs');
-const {discoverExecutables,discoverSteam,importSelected,steamId,directory}=require('../core/installed-games.cjs');
-const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
+const {discoverExecutables,discoverSteam,importSelected,steamId,directory,boundedText}=require('../core/installed-games.cjs');
+const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,readSourceGame} = require('../core/state.cjs');
 
 const {auditSources}=require('../core/source-audit.cjs');
 const {createFeedReader}=require('../core/feed-reader.cjs');
@@ -32,6 +36,15 @@ async function bootstrap() {
   const data = readState(file);
   await fs.mkdir(path.dirname(file),{recursive:true});
   const copies=new SaveBackups(path.dirname(file));
+  let storageHealth={status:'ok',at:new Date().toISOString()},steamHealth={status:'unknown',at:''},safeAppearance=process.argv.includes('--safe-mode');
+  const playing=new Set();let battery=false;
+  try{battery=powerMonitor.isOnBatteryPower();}catch{}
+  const runtime=()=>({safe:safeAppearance,battery,playing:playing.size>0});
+  function sendRuntime(){if(window&&!window.isDestroyed())window.webContents.send('appearance-runtime',runtime());}
+  powerMonitor.on('on-battery',()=>{battery=true;sendRuntime();});
+  powerMonitor.on('on-ac',()=>{battery=false;sendRuntime();});
+  async function observeSteam(fn){try{const result=await fn();steamHealth={status:'ok',at:new Date().toISOString()};return result;}catch(e){steamHealth={status:'error',at:new Date().toISOString()};throw e;}}
+  async function syncStore(){if(!data.syncFolder)throw Error('Сначала выберите папку синхронизации.');return new SaveBackups(await directory(data.syncFolder));}
   let transferStates=new Map(data.downloads.map(job=>[job.id,job.status])),sourceStates=new Map(data.sources.map(source=>[source.id,source.updated]));
   function collectNotifications(){
     for(const j of data.downloads)if(transferStates.get(j.id)!==j.status&&['done','error'].includes(j.status))pushNotice(j.status==='done'?'Загрузка завершена':'Ошибка загрузки',j.title,'downloads');
@@ -42,8 +55,11 @@ async function bootstrap() {
     data.notifications.unshift({id:randomUUID(),title,detail:String(detail||'').slice(0,140),target,at:new Date().toISOString()});data.notifications.splice(80);
     if(window&&!window.isDestroyed())window.webContents.send('notice-changed');
   }
-  const persist = () => {try { collectNotifications();saveState(file,data); } catch (e) { console.error('State:',e.message); if(window&&!window.isDestroyed())window.webContents.send('storage-error',e.message); }};
+  const persist = () => {try { collectNotifications();sourceWorkbench.observe();saveState(file,data);storageHealth={status:'ok',at:new Date().toISOString()}; } catch (e) { storageHealth={status:'error',at:new Date().toISOString()};console.error('State:',e.message); if(window&&!window.isDestroyed())window.webContents.send('storage-error',e.message); }};
   let window,tray;
+  const sourceWorkbench=createSourceWorkbench(data,pushNotice);
+  const steamDetails=createSteamDetails(),steamWatch=wishMonitor(data.steamDesk,steamDetails,persist,pushNotice);
+  const bulkPlans=new Map(),migrationPlans=new Map(),cleanupPlans=new Map();let bulkBusy=false,cleanupBusy=false,reportBusy=false;
   const queue = new DownloadQueue(data.downloads,persist,{options:data.downloadOptions});
   app.once('before-quit',()=>queue.dispose());
   let downloadCheck;
@@ -131,10 +147,25 @@ async function bootstrap() {
   const actions = {
     settings: () => data.settings,
     saveSettings: (x) => { data.settings = updateSettings(x); persist();syncTray();return data.settings; },
-    steam: searchSteam,
+    steam: filters=>observeSteam(()=>searchSteam(filters)),
+    steamDetail: (id,cc)=>observeSteam(()=>steamDetails(id,cc)),
+    appearanceRuntime: ()=>runtime(),
+    safeAppearance: enabled=>{if(typeof enabled!=='boolean')throw Error('Неверная настройка.');safeAppearance=enabled;sendRuntime();return runtime();},
+    statusCenter: ()=>({storage:storageHealth,steam:steamHealth,sources:data.sources.map(s=>({name:s.name,enabled:s.enabled,updated:s.updated||'',error:Boolean(s.syncError),count:s.games.length}))}),
+    statusCheck: async()=>{
+      try{await observeSteam(()=>searchSteam({page:1,cc:data.settings.region}));}catch{}
+      try{await fs.access(path.dirname(file),require('node:fs').constants.W_OK);if(storageHealth.status!=='error')storageHealth={status:'ok',at:new Date().toISOString()};}catch{storageHealth={status:'error',at:new Date().toISOString()};}
+    },
+    steamWishlist: ()=>data.steamDesk.wishes,
+    steamWishSave: async (id,cc,raw)=>{
+      const d=await steamDetails(id,cc);saveWish(data.steamDesk,d,raw,pushNotice);
+      persist();return data.steamDesk.wishes;
+    },
+    steamWishRemove: id=>{data.steamDesk.wishes=data.steamDesk.wishes.filter(w=>w.id!==id);persist();return data.steamDesk.wishes;},
+    steamWishRefresh: ()=>steamWatch(true),
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
-    sources: () => sourcesSummary(prioritizeOnlineFix(data.sources)).map(s=>({...s,primaryOnlineFix:isPrimaryOnlineFix(s),loading:presetSync.loading(s.id)})),
+    sources: () => sourcesSummary(sortedSources(prioritizeOnlineFix(data.sources))).map(s=>({...s,primaryOnlineFix:isPrimaryOnlineFix(s),loading:presetSync.loading(s.id)})),
     connectOnlineFix: async () => {
       const source=connectOnlineFix(data.sources);
       persist();
@@ -166,19 +197,67 @@ async function bootstrap() {
       const src = find(data.sources,id);
       if (op === 'remove') data.sources.splice(data.sources.indexOf(src),1);
       else if (op === 'toggle') {
-        src.enabled = !src.enabled;
+        src.enabled = !src.enabled;sourceWorkbench.observe(true);
         if(src.enabled&&managedURL(src)&&(!src.updated||src.syncError))void presetSync.refresh(src).catch(()=>{});
       }
-      else if(op==='refresh'&&managedURL(src))return presetSync.refresh(src);
+      else if(op==='refresh'&&src.kind==='url')return presetSync.refresh(src);
       else if(op==='refresh'){
-        const parsed=await readConnectedSource(src);if(!data.sources.includes(src))return;
-        Object.assign(src,parsed,{updated:new Date().toISOString()});
+        try{const parsed=await readConnectedSource(src);if(!data.sources.includes(src))return;if(!parsed.games.length)throw Error('В списке нет допустимых записей. Кэш сохранён.');Object.assign(src,parsed,{updated:new Date().toISOString(),lastAttempt:new Date().toISOString(),syncError:''});}
+        catch(e){if(data.sources.includes(src)){src.lastAttempt=new Date().toISOString();src.syncError=String(e.message).slice(0,220);persist();}throw e;}
       } else throw Error('Недопустимое действие.');
       persist();
     },
-    searchSources: (q,page,id,mode) => searchSources(data.sources,q,page,id,mode),
-    availability: titles => availability(data.sources,titles),
-    sourceMatches: title => sourceMatches(prioritizeOnlineFix(data.sources),title),
+    searchSources: (q,page,id,mode) => mode==='grouped'?groupSources(data.sources,q,page,id,data.sourceWorkbench.aliases):searchSources(data.sources,q,page,id,mode),
+    availability: titles => {
+      const rows=availability(data.sources,titles),aliases=data.sourceWorkbench.aliases;
+      if(!aliases.length)return rows;
+      return rows.map(row=>({...row,sources:[...new Set(matchesWithAliases(data.sources,row.title,aliases).map(s=>s.name))]}));
+    },
+    sourceMatches: title => matchesWithAliases(sortedSources(prioritizeOnlineFix(data.sources)),title,data.sourceWorkbench.aliases),
+    sourceHistory: id => sourceWorkbench.history(find(data.sources,id)),
+    sourceConfigure: (id,options) => {configure(find(data.sources,id),options);persist();},
+    sourceWorkbench: () => ({aliases:data.sourceWorkbench.aliases,watch:data.sourceWorkbench.watch,bookmarks:data.sourceWorkbench.bookmarks}),
+    sourceWorkbenchChange: (kind,value) => {
+      const work=data.sourceWorkbench;
+      if(kind==='watch')sourceWorkbench.watch(value);
+      else if(kind==='unwatch')work.watch=work.watch.filter(w=>w.id!==value);
+      else if(kind==='alias'){sourceWorkbench.alias(value?.from,value?.to);sourceWorkbench.observe(true);}
+      else if(kind==='unalias'){if(Number.isInteger(value)&&value>=0)work.aliases.splice(value,1);sourceWorkbench.observe(true);}
+      else if(kind==='bookmark'){const g=readSourceGame(data.sources,value?.id,value?.index,value?.title);sourceWorkbench.bookmark(find(data.sources,g.id),g);}
+      else if(kind==='unbookmark')work.bookmarks=work.bookmarks.filter(w=>w.id!==value);
+      else throw Error('Неизвестное действие источника.');
+      persist();
+    },
+    sourceBookmark: id=>sourceWorkbench.locate(id),
+    sourceExport: async id=>{
+      const s=find(data.sources,id),{filePath}=await dialog.showSaveDialog(window,{defaultPath:'ByAzen-source.json',filters:[{name:'Hydra JSON',extensions:['json']}]});
+      if(!filePath)return false;
+      const exportText=sourceExport(s);if(Buffer.byteLength(exportText)>64*1048576)throw Error('Кэш превышает 64 МБ.');
+      await fs.writeFile(filePath,exportText,'utf8');return true;
+    },
+    sourceBulkPreview: async urls=>{
+      if(bulkBusy)throw Error('Проверка списка уже запущена.');
+      if(!Array.isArray(urls)||urls.length<1||urls.length>5||urls.some(x=>typeof x!=='string'||x.length>4096))throw Error('Укажите от 1 до 5 ссылок.');
+      bulkBusy=true;
+      try{
+        const rows=[],keys=new Set(data.sources.filter(s=>s.kind==='url').map(s=>urlKey(s.url)));
+        for(const input of urls){
+          let url;
+          try{url=webURL(input).href;const key=urlKey(url);if(keys.has(key))throw Error('Повтор ссылки.');keys.add(key);
+            const parsed=await readSource(url);if(!parsed.games.length)throw Error('Нет допустимых записей.');rows.push({...parsed,kind:'url',url});
+          }catch(e){rows.push({url:url||input,error:String(e.message).slice(0,200)});}
+        }
+        return {draft:token(bulkPlans,{time:Date.now(),rows}),rows:rows.map(r=>({url:r.url,error:r.error,name:r.name,count:r.games?.length,skipped:r.skipped}))};
+      }finally{bulkBusy=false;}
+    },
+    sourceBulkImport: (id,indices)=>{
+      const plan=bulkPlans.get(id);if(!plan||Date.now()-plan.time>10*60000)throw Error('Откройте новый предпросмотр.');
+      if(!Array.isArray(indices)||!indices.length||indices.length>5||indices.some(i=>!Number.isInteger(i)||!plan.rows[i]?.games))throw Error('Выберите проверенные списки.');
+      const rows=[...new Set(indices)].map(i=>plan.rows[i]),keys=new Set(data.sources.filter(s=>s.kind==='url').map(s=>urlKey(s.url)));
+      if(rows.some(r=>keys.has(urlKey(r.url))))throw Error('Список уже добавлен. Откройте новый предпросмотр.');
+      if(data.sources.filter(s=>!s.presetName&&!s.presetURL).length+rows.length>CUSTOM_SOURCE_LIMIT)throw Error('Можно добавить до 20 своих источников.');
+      data.sources.push(...rows.map(r=>({...r,id:randomUUID(),enabled:true,updated:new Date().toISOString()})));bulkPlans.delete(id);persist();return rows.length;
+    },
     sourceGame: (id,index,title) => readSourceGame(data.sources,id,index,title),
     openSource: async (sourceId,index,linkIndex,action,expected) => {
       const src = find(data.sources,sourceId);
@@ -189,6 +268,47 @@ async function bootstrap() {
       return addDownload(url,src.games[index].title,src.name);
     },
     library: () => data.library,
+    diskReport: async()=>{
+      if(reportBusy)throw Error('Отчёт уже строится.');reportBusy=true;
+      try{const root=await pickFolder('Выберите папку для отчёта по месту');return root?await diskReport(root):null;}finally{reportBusy=false;}
+    },
+    cleanupPreview: async()=>{
+      const rows=await previewCleanup(data.downloads);
+      return {id:token(cleanupPlans,rows),items:rows.map(({id,title,bytes})=>({id,title,bytes}))};
+    },
+    cleanupApply: async(id,ids)=>{
+      if(cleanupBusy)throw Error('Очистка уже выполняется.');
+      const rows=cleanupPlans.get(id);if(!rows||!Array.isArray(ids)||!ids.length||ids.length>rows.length||ids.some(x=>!rows.some(r=>r.id===x)))throw Error('Выберите файлы из нового предпросмотра.');
+      cleanupBusy=true;cleanupPlans.delete(id);
+      try{return await cleanup(data.downloads,rows.filter(r=>ids.includes(r.id)));}finally{cleanupBusy=false;}
+    },
+    migrationExport: async()=>{
+      const {filePath}=await dialog.showSaveDialog(window,{defaultPath:'ByAzen-migration.json',filters:[{name:'JSON',extensions:['json']}]});if(!filePath)return false;
+      const text=migrationExport(data);if(Buffer.byteLength(text)>maxMigration)throw Error('Пакет превышает 12 МБ.');await fs.writeFile(filePath,text);return true;
+    },
+    migrationPreview: async()=>{
+      const {filePaths:[filename]}=await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'ByAzen JSON',extensions:['json']}]});if(!filename)return null;
+      const pack=readMigration(await boundedText(filename,maxMigration)),cards=freshCards(data.library,pack);
+      return {id:token(migrationPlans,pack),total:pack.library.length,newCards:cards.length,titles:cards.slice(0,30).map(x=>x.title),theme:pack.settings.theme};
+    },
+    migrationApply: (id,flags)=>withMaintenance(()=>{
+      const pack=migrationPlans.get(id);if(!pack)throw Error('Откройте новый предпросмотр.');
+      const result=adoptMigration(data,pack,flags?.games,flags?.settings);migrationPlans.delete(id);persist();syncTray();return result;
+    }),
+    requiredFiles: id=>game(id).requiredFiles||[],
+    checkRequired: id=>verifyFiles(game(id)),
+    saveRequired: (id,names)=>withMaintenance(()=>{const g=game(id);if(!g.exe)throw Error('Сначала выберите .exe.');g.requiredFiles=cleanRequired(names);persist();}),
+    syncFolder: ()=>data.syncFolder,
+    pickSyncFolder: ()=>withMaintenance(async()=>{
+      const dir=await pickFolder('Папка синхронизации для резервных копий',data.syncFolder||undefined);if(!dir)return false;
+      data.syncFolder=await copies.source(dir);persist();return true;
+    }),
+    syncBackups: async id=>{const store=await syncStore();return store.list(game(id).id);},
+    makeSyncBackup: id=>withMaintenance(async()=>{const store=await syncStore(),g=game(id);return store.make(g.id,savesOf(g));}),
+    removeSyncBackup: (id,backup)=>withMaintenance(async()=>{const store=await syncStore();return store.remove(game(id).id,backup);}),
+    exportCollection: async name=>{
+      const text=collectionHTML(data.library,name),{filePath}=await dialog.showSaveDialog(window,{defaultPath:'ByAzen-collection.html',filters:[{name:'HTML',extensions:['html']}]});if(!filePath)return false;await fs.writeFile(filePath,text);return true;
+    },
     scanLibrary,
     saveBatch: (ids,patch) => withMaintenance(()=>{const result=updateBatch(data.library,ids,patch);persist();return result;}),
     previewMove: old => withMaintenance(async()=>{
@@ -299,7 +419,9 @@ async function bootstrap() {
       if(steam)await shell.openExternal(`steam://rungameid/${g.steamAppId}`);
       else{
         const child=await launchGame(g.exe,args),start=performance.now(),day=localDay(),title=g.title;
+        playing.add(child);sendRuntime();
         child.once('exit',()=>{
+          playing.delete(child);sendRuntime();
           const seconds=Math.min(86400,Math.round((performance.now()-start)/1000));if(seconds<1)return;
           data.journal.sessions.push({id:randomUUID(),gameId:g.id,title,day,seconds,manual:false});data.journal.sessions=data.journal.sessions.slice(-4000);persist();
         });
@@ -329,7 +451,7 @@ async function bootstrap() {
       if(await shell.openPath(parent))throw Error('Windows не открыла папку назначения.');
     },
     addDownload: (raw,sha256) => addDownload(sourceLink(raw),'','',cleanHash(sha256)),
-    downloadAction: (id,op) => queue.action(id,op)
+    downloadAction: (id,op) => {if(cleanupBusy&&['resume','remove','cancel'].includes(op))throw Error('Дождитесь завершения очистки.');return queue.action(id,op);}
   };
   async function addDownload(url,title,source,sha256){
     if(url.startsWith('magnet:')){
@@ -367,6 +489,9 @@ async function bootstrap() {
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});
   await window.loadURL(origin+'/');
+  const schedule=setInterval(()=>void presetSync.scheduled(),60000);schedule.unref();
+  const priceSchedule=setInterval(()=>void steamWatch(),120000);priceSchedule.unref();
+  app.once('before-quit',()=>{clearInterval(schedule);clearInterval(priceSchedule);});
   void presetSync.startup().then(()=>{const retry=setTimeout(()=>void presetSync.retryTransient(),60000);retry.unref();});
 }
 if (!app.requestSingleInstanceLock()) app.quit();

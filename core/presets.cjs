@@ -72,7 +72,7 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
     if (running.has(source)) return running.get(source);
     const task=Promise.resolve().then(async()=>{
       try {
-        const {name,...parsed}=await read(source.url,presetLimits(source.presetURL||source.url));
+        const {name,...parsed}=await read(source.url,managedURL(source)?presetLimits(source.presetURL||source.url):undefined);
         if(!sources.includes(source))return;
         if(!parsed.games.length)throw Error('В списке нет записей с допустимыми ссылками. Сохранённые данные не изменены.');
         Object.assign(source,parsed,{name:source.presetName||name,updated:new Date(now()).toISOString(),syncError:'',transientFailure:false});
@@ -81,7 +81,7 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
         throw e;
       } finally {
         running.delete(source);
-        if(sources.includes(source))persist();
+        if(sources.includes(source)){source.lastAttempt=new Date(now()).toISOString();persist();}
       }
     });
     running.set(source,task);
@@ -97,9 +97,13 @@ function createPresetSync(sources,read,persist,{concurrency=2,maxAge=24*60*60*10
       }
     }));
   }
-  const startup=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&(!s.updated||s.syncError||now()-Date.parse(s.updated)>=maxAge)));
+  const hours=s=>s.refreshHours??(managedURL(s)?maxAge/3600000:0);
+  const eligible=s=>(s.kind==='url'||managedURL(s))&&s.enabled&&hours(s)>0;
+  const expired=s=>!s.updated&&!s.lastAttempt||now()-(Date.parse(s.lastAttempt||s.updated)||0)>=hours(s)*3600000;
+  const startup=()=>runBatch(sources.filter(s=>eligible(s)&&(expired(s)||managedURL(s)&&s.refreshHours==null&&s.syncError)));
+  const scheduled=()=>runBatch(sources.filter(s=>eligible(s)&&expired(s)));
   const retryFailed=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&(!s.updated||s.syncError)));
-  const retryTransient=()=>runBatch(sources.filter(s=>managedURL(s)&&s.enabled&&s.transientFailure));
-  return {refresh,startup,retryFailed,retryTransient,loading:id=>running.has(sources.find(s=>s.id===id))};
+  const retryTransient=()=>runBatch(sources.filter(s=>managedURL(s)&&eligible(s)&&s.transientFailure));
+  return {refresh,startup,scheduled,retryFailed,retryTransient,loading:id=>running.has(sources.find(s=>s.id===id))};
 }
 module.exports = {PRESETS,PRESET_LIMITS,presetLimits,managedURL,CUSTOM_SOURCE_LIMIT,urlKey,installPresets,createPresetSync,isPrimaryOnlineFix,prioritizeOnlineFix,connectOnlineFix};

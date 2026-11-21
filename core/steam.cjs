@@ -1,3 +1,4 @@
+const {parseQuery,steamSeed,matchesQuery}=require('../public/query.js');
 const {load} = require('cheerio');
 const {getJSON} = require('./net.cjs');
 const PAGE = 24;
@@ -14,10 +15,14 @@ function steamQuery(raw = {}) {
   const u = new URL('https://store.steampowered.com/search/results/');
   const q = u.searchParams;
   for (const [key,val] of Object.entries({ query:'', start: (page - 1) * PAGE, count: PAGE, infinite: 1, l: 'russian', cc: 'DE' })) q.set(key, val);
-  if (typeof raw.term === 'string' && raw.term.trim()) q.set('term', raw.term.trim().slice(0, 100));
+  const clauses=parseQuery(raw.term),term=clauses?steamSeed(clauses):typeof raw.term==='string'?raw.term.trim():'';
+  if(term)q.set('term',term.slice(0,100));
   for (const [key, options] of Object.entries(picks)) if (options.includes(raw[key])) q.set(key, raw[key]);
   if (typeof raw.tags === 'string' && /^\d{1,8}(,\d{1,8}){0,9}$/.test(raw.tags)) q.set('tags', raw.tags);
   if (raw.sort_by === 'topsellers') q.set('filter', 'topsellers');
+  if (raw.hideAddons===true)q.set('category1','998');
+  if(['9','38','48'].includes(raw.coop))q.set('category2',raw.coop);
+  if (raw.comingSoon===true){q.set('filter','comingsoon');q.set('category1','998');}
   if (raw.specials === true) q.set('specials', '1');
   return {u, page};
 }
@@ -30,7 +35,7 @@ function officialProduct(value) {
   } catch { return null; }
 }
 function steamImage(value) {
-  try { const u = new URL(value); return u.protocol === 'https:' && ['shared.fastly.steamstatic.com','shared.akamai.steamstatic.com','shared.cloudflare.steamstatic.com','cdn.akamai.steamstatic.com','cdn.cloudflare.steamstatic.com','cdn.fastly.steamstatic.com','store.akamai.steamstatic.com','store.cloudflare.steamstatic.com','store.fastly.steamstatic.com','steamcdn-a.akamaihd.net'].includes(u.hostname) ? u.href : ''; } catch { return ''; }
+  try { const u = new URL(value); return u.protocol === 'https:' && !u.username&&!u.password&&!u.port&& ['shared.fastly.steamstatic.com','shared.akamai.steamstatic.com','shared.cloudflare.steamstatic.com','cdn.akamai.steamstatic.com','cdn.cloudflare.steamstatic.com','cdn.fastly.steamstatic.com','store.akamai.steamstatic.com','store.cloudflare.steamstatic.com','store.fastly.steamstatic.com','steamcdn-a.akamaihd.net'].includes(u.hostname) ? u.href : ''; } catch { return ''; }
 }
 function parseResults(data, page) {
   if (typeof data?.results_html !== 'string' || !Number.isFinite(Number(data.total_count)) || data.total_count == null || data.success === false || data.success === 0) throw Error('Steam вернул неожиданный ответ.');
@@ -55,6 +60,8 @@ function parseResults(data, page) {
 async function searchSteam(filters) {
   const {u,page} = steamQuery(filters);
   const json = await getJSON(u.href, {max: 2_000_000, validate: x => { if (x.origin !== u.origin) throw Error('Неожиданное перенаправление Steam.'); }});
-  return parseResults(json,page);
+  const parsed=parseResults(json,page),conditions=parseQuery(filters?.term);
+  if(conditions)parsed.games=parsed.games.filter(g=>matchesQuery(g.title,conditions));
+  return parsed;
 }
 module.exports = {steamQuery, officialProduct, steamImage, parseResults, searchSteam};

@@ -32,6 +32,16 @@ async function smoke(){
       const api=window.byazen,settings=await api.settings();
       await api.saveSettings({...settings,personal:{...settings.personal,tray:true}});
       await api.saveSettings({...settings,personal:{...settings.personal,tray:false}});
+      const before=await api.appearanceRuntime();if(before.safe)throw Error('Unexpected initial safe mode');
+      await api.safeAppearance(true);
+      if(document.documentElement.dataset.safeAppearance!=='true')await wait(100);
+      if(document.documentElement.dataset.theme!=='dark')throw Error('Safe appearance did not use the classic theme');
+      await api.safeAppearance(false);
+      await api.saveRequired('fixture',['byazen-ci-missing.dat']);
+      const files=await api.checkRequired('fixture');
+      if(files.length!==2||!files[0].ok||files[1].ok)throw Error('Native required-file check did not distinguish a missing file');
+      const health=await api.statusCenter();if(health.storage.status!=='ok')throw Error('Profile storage status is not healthy');
+      const prep=await api.cleanupPreview();if(prep.items.length)throw Error('Fixture should not have cleanup candidates');
       await api.journalChange('goal',3);
       await api.launchGame('fixture',0);
       for(let i=0;i<50;i++){
@@ -44,7 +54,7 @@ async function smoke(){
     })()`);
     assert.equal(result.wall,true);assert.ok(result.seconds>=1);assert.equal(result.goal,3);
     const state=JSON.parse(await fs.readFile(stateFile,'utf8'));assert.equal(state.settings.personal.tray,false);assert.equal(state.library[0].lastProfile,JSON.stringify({name:'Fixture',args:['-n','3','127.0.0.1']}));assert.equal(state.journal.goal,3);
-    console.log('Windows portable renderer, isolated preload, tray create/remove, EXE session and journal state verified.');
+    console.log('Windows portable renderer, isolated preload, tray, safe appearance, required files, storage and EXE session verified.');
   }finally{socket.close();}
 }
 const watchdog=setTimeout(()=>{console.error('Windows smoke test timed out');process.exit(1);},30000);

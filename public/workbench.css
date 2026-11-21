@@ -1,0 +1,24 @@
+.catalog-work-buttons{justify-content:end}
+.catalog-work-buttons .btn{min-height:34px;font-size:var(--ui-small);padding-inline:9px}
+.global-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.global-groups section,.work-form{padding:12px;border:1px solid var(--line);border-radius:var(--radius-md);margin-block:10px}
+.global-groups ul{padding:0;list-style:none;display:grid;gap:5px}
+.global-groups .btn{white-space:normal;text-align:start;justify-content:start;min-height:36px}
+#global-work-form input,#filter-save input,#source-work-body .row input{flex:1 1 155px;width:auto}
+#source-work-body,#steam-wishes{margin-top:10px}
+#source-bulk-preview li{overflow-wrap:anywhere}
+.steam-summary{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.steam-summary img{width:min(33%,180px);aspect-ratio:2.15;object-fit:cover;border-radius:var(--radius-md)}
+.steam-facts{display:grid;grid-template-columns:auto 1fr;gap:5px 13px}
+.steam-facts dt{color:var(--muted)}.steam-facts dd{margin:0}
+.steam-shots{display:grid;gap:8px;grid-template-columns:repeat(4,minmax(0,1fr));margin-block:10px}
+.steam-shots .btn{padding:0;overflow:hidden}.steam-shots img{width:100%;height:100%;aspect-ratio:16/9;object-fit:cover}
+#steam-picture,#steam-video{width:100%;max-height:47vh;object-fit:contain;margin-top:10px}
+.steam-compare{overflow:auto}.steam-compare table{border-collapse:collapse;width:100%}.steam-compare td,.steam-compare th{min-width:110px;border:1px solid var(--line);padding:9px;text-align:start;vertical-align:top}.steam-compare th .btn{display:flex;margin-top:6px;min-height:31px}
+#steam-detail details,#source-manage details{margin-top:12px}.wish-note{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:720px){.catalog-work-buttons{justify-content:start}.global-groups{grid-template-columns:minmax(0,1fr)}.steam-shots{grid-template-columns:repeat(2,minmax(0,1fr))}.global-groups .btn,#steam-detail .btn{white-space:normal}.catalog-sort{flex-wrap:wrap}}
+.home-widget{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:20px clamp(16px,2vw,32px)}
+.home-widget-toolbar{margin:20px clamp(16px,2vw,32px);display:flex;justify-content:end}
+.settings-workbench{margin:0 0 13px}.settings-workbench .btn{white-space:normal;text-align:center}
+#health-center .steam-facts,#space-report .steam-facts{margin-block:10px}#health-center h3{margin-top:16px}
+@media(max-width:720px){.home-widget{flex-wrap:wrap}}

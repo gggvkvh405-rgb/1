@@ -1,3 +1,4 @@
+import {parseQuery,matchesQuery} from './query.js';
 // Steam search accepts both these groups as store tag IDs.
 export const genres = [
  ['19','Экшен'],['21','Приключения'],['122','Ролевые игры'],['9','Стратегии'],['492','Инди'],
@@ -40,8 +41,8 @@ export const offlineGames = [
  seed(1151340,'Fallout 76','fallout',2020,'19 122 1695 3859')
 ];
 export function offlineResults(filters) {
- const term=normalize(filters.term), chosen=String(filters.tags||'').split(',').filter(Boolean);
- const found=offlineGames.filter(g=>normalize(g.title).includes(term)&&(!filters.category1||g.type===filters.category1)&&chosen.every(id=>g.tags.includes(id)));
+ const term=normalize(filters.term),conditions=parseQuery(filters.term), chosen=String(filters.tags||'').split(',').filter(Boolean);
+ const found=offlineGames.filter(g=>(conditions?matchesQuery(g.title,conditions):normalize(g.title).includes(term))&&(!(filters.hideAddons||filters.category1)||g.type===(filters.hideAddons?'998':filters.category1))&&(!filters.coop||filters.coop==='9'&&g.tags.includes('1685'))&&!filters.comingSoon&&chosen.every(id=>g.tags.includes(id)));
  if(filters.sort_by==='Name_ASC'||filters.sort_by==='Name_DESC') found.sort((a,b)=>a.title.localeCompare(b.title,'ru')*(filters.sort_by==='Name_ASC'?1:-1));
  if(filters.sort_by==='Released_DESC') found.sort((a,b)=>(b.year||0)-(a.year||0));
  return {games:found,total:found.length,page:1,pageSize:24,offline:true};

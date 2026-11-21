@@ -10,7 +10,7 @@ function commitReplacement(sources,id,draft,now=Date.now){
  const presetURL=old.presetURL||(old.presetName?old.url:undefined);
  // Replace the object, not just its fields: an old in-flight refresh must not
  // apply to the newly saved source or regenerate the old cache.
- const source={...confirmed,id:old.id,enabled:old.enabled,updated:new Date(now()).toISOString(),...(presetURL?{presetURL}:{})};
+ const source={...confirmed,id:old.id,enabled:old.enabled,priority:old.priority,refreshHours:old.refreshHours,lastDiff:old.lastDiff,updated:new Date(now()).toISOString(),...(presetURL?{presetURL}:{})};
  sources[index]=source;
  return source;
 }
