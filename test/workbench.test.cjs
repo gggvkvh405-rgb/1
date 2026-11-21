@@ -6,7 +6,7 @@ const {steamQuery}=require('../core/steam.cjs');
 const {mediaURL,releaseDay,sanitizeDetails,createSteamDetails,cleanStore,saveWish,wishMonitor}=require('../core/steam-detail.cjs');
 const {cleanWorkbench,snapshotDiff,createSourceWorkbench,configure,sourceExport}=require('../core/source-workbench.cjs');
 const {parseSource}=require('../core/sources.cjs');
-const {maxMigration,migrationExport,readMigration,freshCards,adoptMigration,cleanRequired,verifyFiles,diskReport,previewCleanup,cleanup,collectionHTML}=require('../core/file-workbench.cjs');
+const {migrationExport,readMigration,freshCards,adoptMigration,cleanRequired,verifyFiles,diskReport,previewCleanup,cleanup,collectionHTML}=require('../core/file-workbench.cjs');
 const {cleanHome}=require('../public/home-layout.js');
 const game=(title,name='fixture',date='2026-11-20')=>({title,size:'2 MB',date,links:[`https://example.com/${name}`]});
 const feed=(id,games)=>({id,enabled:true,name:`Feed ${id}`,kind:'url',url:`https://example.com/${id}.json`,updated:'2026-11-20T00:00:00.000Z',games});
@@ -74,7 +74,7 @@ test('required file checks cannot escape the executable folder; report returns a
 });
 test('cleanup only deletes selected verified completed HTTP temporary files and rejects changes',async t=>{
  const root=await temp(t),id='d757138c-cbd6-4e30-b382-361ffa553234',partial=path.join(root,`.byazen-${id}.part`),file=path.join(root,'game.zip');await fs.writeFile(partial,'orphan');await fs.writeFile(file,'keep');
- const item={id,title:'fixture',file,partial,status:'running'};assert.equal((await previewCleanup([item])).length,0);item.status='done';const [row]=await previewCleanup([item]);assert.equal(row.bytes,6);
+ const item={id,title:'fixture',file,partial,status:'running'};assert.equal((await previewCleanup([item])).length,0);item.status='done';assert.equal((await previewCleanup([{...item,kind:'torrent'}])).length,0);const [row]=await previewCleanup([item]);assert.equal(row.bytes,6);
  await fs.appendFile(partial,' changed');await assert.rejects(cleanup([item],[row]),/изменилось/);
  const fresh=await previewCleanup([item]);assert.deepEqual(await cleanup([item],fresh),{removed:1,failed:0});assert.equal(await fs.readFile(file,'utf8'),'keep');
 });

@@ -65,7 +65,7 @@ async function diskReport(folder){
 async function previewCleanup(items){
  const out=[];for(const job of items){
   if(out.length>=100)break;
-  if(!partialID.test(job.id)||!['canceled','done'].includes(job.status)||!job.partial||typeof job.file!=='string'||!path.isAbsolute(job.file))continue;
+  if(job.kind==='torrent'||!partialID.test(job.id)||!['canceled','done'].includes(job.status)||!job.partial||typeof job.file!=='string'||!path.isAbsolute(job.file))continue;
   const filename=`.byazen-${job.id}.part`,parent=path.dirname(job.file),target=path.join(parent,filename);
   if(!samePath(target,job.partial))continue;
   try{
