@@ -1,7 +1,7 @@
 // Deterministic, network-free backgrounds: npm run themes:art
 const fs=require('node:fs');
 const path=require('node:path');
-const {visualThemes}=require('../public/themes.js');
+const {proceduralThemes}=require('../public/themes.js');
 const out=path.resolve(__dirname,'../public/assets/themes');
 fs.mkdirSync(out,{recursive:true});
 function art(theme,index){
@@ -57,4 +57,4 @@ function art(theme,index){
  }
  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><defs><linearGradient id="bg" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="${base}"/><stop offset="1" stop-color="${deep}"/></linearGradient><radialGradient id="halo"><stop stop-color="${second}" stop-opacity=".66"/><stop offset="1" stop-color="${mid}" stop-opacity="0"/></radialGradient><radialGradient id="orb" cx=".29" cy=".24" r=".85"><stop stop-color="${pale}"/><stop offset=".46" stop-color="${second}"/><stop offset="1" stop-color="${deep}"/></radialGradient><linearGradient id="wash" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${mid}"/><stop offset="1" stop-color="${deep}"/></linearGradient><linearGradient id="water" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${second}"/><stop offset=".44" stop-color="${mid}"/><stop offset="1" stop-color="${deep}"/></linearGradient><linearGradient id="glass0" x2="1" y2="1"><stop stop-color="${edge}" stop-opacity=".86"/><stop offset=".53" stop-color="${mid}" stop-opacity=".75"/><stop offset="1" stop-color="${deep}" stop-opacity=".86"/></linearGradient><linearGradient id="glass1" x2="0" y2="1"><stop stop-color="${pale}" stop-opacity=".74"/><stop offset="1" stop-color="${mid}" stop-opacity=".66"/></linearGradient></defs><path d="M0 0H1200V800H0Z" fill="url(#bg)"/><ellipse cx="806" cy="287" rx="850" ry="625" fill="url(#halo)"/>${shapes}</svg>\n`;
 }
-visualThemes.forEach((t,i)=>fs.writeFileSync(path.join(out,`${i}.svg`),art(t,i).replace(/(\d+\.\d{3})\d+/g,'$1')));
+proceduralThemes.forEach((t,i)=>fs.writeFileSync(path.join(out,`${i}.svg`),art(t,i).replace(/(\d+\.\d{3})\d+/g,'$1')));

@@ -1,4 +1,5 @@
-import {collections,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
+import {prepareWallpaper,readWallpaper,saveWallpaper} from './wallpaper-store.js';
+import {collections,sceneCollections,sceneThemes,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
 import {openDownloadPicker} from './download-picker.js';
 import {motionAllowed,syncMotion,play,reveal,revealSection} from './motion.js';
 import {icon as I} from './icons.js';
@@ -10,8 +11,8 @@ const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:''};
-let renderId=0;
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null};
+let renderId=0,customURL,disposeWallpaperPreview;
 const details = (icon,title,desc,action='')=>`<div class="empty"><span class="empty-icon">${I(icon)}</span><h3>${esc(title)}</h3><p>${esc(desc)}</p>${action}</div>`;
 const btn = (label,action,glyph='',classes='')=>`<button type="button" class="btn ${classes}" data-action="${action}">${glyph?I(glyph):''}${label}</button>`;
 const head = (eyebrow,title,desc,actions='')=>`<div class="page-head"><div><div class="eyebrow"><i></i>${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div>${actions?`<div class="head-actions">${actions}</div>`:''}</div>`;
@@ -19,7 +20,7 @@ const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria
 const current = (n)=>n===renderId;
 function toast(text,error=false){const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
-function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing)dialog.close();dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
+function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing){disposeWallpaperPreview?.();dialog.close();}dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
 function sidebar(){
  $('#nav').innerHTML=Object.entries(sections).filter(([id])=>id!=='sources').map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
@@ -352,24 +353,34 @@ function openCatalogGame(product){
  const version=renderId;
  openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
 }
+function setWallpaper(record){
+ if(state.wallpaper?.blob!==record?.blob){
+  if(customURL)URL.revokeObjectURL(customURL);
+  customURL=record?URL.createObjectURL(record.blob):undefined;
+ }
+ state.wallpaper=record;
+}
 function applyTheme(){
  const theme=getTheme(state.settings.theme),root=document.documentElement;
+ const custom=state.wallpaper?.enabled&&customURL;
  root.dataset.theme=theme.id;
- root.dataset.themeGroup=theme.group;
+ root.dataset.themeGroup=custom?'custom':(theme.atmosphere||theme.group);
  root.style.setProperty('--hue',theme.hue);
  root.style.setProperty('--second-hue',theme.alt);
  root.classList.toggle('motion-off',state.settings.motion);syncMotion();
- const wall=$('#theme-wall'),image=$('#theme-wall-image');
- wall.hidden=!theme.asset;
- if(theme.asset&&image.getAttribute('src')!==theme.asset)image.src=theme.asset;
- if(!theme.asset)image.removeAttribute('src');
+ const wall=$('#theme-wall'),image=$('#theme-wall-image'),src=custom||theme.asset;
+ wall.dataset.art=custom?'custom':(theme.art||'vector');
+ wall.dataset.fit=custom?state.wallpaper.fit:'cover';
+ wall.hidden=!src;
+ if(src&&image.getAttribute('src')!==src)image.src=src;
+ if(!src)image.removeAttribute('src');
 }
 function miniature(theme,lazy=true){
  return `<span class="theme-preview" aria-hidden="true">${theme.asset?`<img src="${theme.asset}" alt="" ${lazy?'loading="lazy"':''} decoding="async">`:''}<span class="mini-shell"><i></i><i></i><i></i></span></span>`;
 }
 function themeCard(theme){
  const active=state.settings.theme===theme.id;
- return `<button type="button" class="theme-card ${active?'theme-selected':''}" data-action="theme-preview" data-theme-id="${theme.id}" aria-haspopup="dialog" aria-label="Предпросмотр: ${esc(theme.name)}${active?' (активна)':''}">${miniature(theme)}<span class="theme-caption"><span><strong>${esc(theme.name)}</strong><small>${esc(theme.category)}</small></span>${I(active?'check':'chevron')}</span></button>`;
+ return `<button type="button" class="theme-card ${active?'theme-selected':''}" data-action="theme-preview" data-theme-id="${theme.id}" data-art="${theme.art||'vector'}" aria-haspopup="dialog" aria-label="Предпросмотр: ${esc(theme.name)}${active?' (активна)':''}">${miniature(theme)}<span class="theme-caption"><span><strong>${esc(theme.name)}</strong><small>${esc(theme.category)}</small></span>${I(active?'check':'chevron')}</span></button>`;
 }
 function applyThemeCardStyle(parent){
  parent.querySelectorAll('.theme-card, .theme-demo').forEach(node=>{
@@ -380,8 +391,10 @@ function applyThemeCardStyle(parent){
  });
 }
 function themeGallery(){
- const active=getTheme(state.settings.theme),cover=active.asset?active:visualThemes[0];
- return `<header class="theme-showcase"><img src="${cover.asset}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея тем</h2><p>100 фонов и 10 коллекций. Выбери свой фон, цвет панелей и атмосферный эффект.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-random">${I('spark')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">Активна: ${esc(active.name)}</span></div></div></header>
+ const active=getTheme(state.settings.theme),custom=state.wallpaper?.enabled&&customURL,cover=custom||active.asset||sceneThemes[0].asset;
+ return `<header class="theme-showcase"><img src="${cover}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея фонов</h2><p>${visualThemes.length} фонов в ${collections.length} коллекциях — от аниме и кино до неона и космоса. Или загрузи своё изображение.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-custom">${I('plus')} Свой фон</button><button class="btn theme-classic-shortcut" data-action="theme-random">${I('shuffle')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">${custom?'Свой фон включён':`Активна: ${esc(active.name)}`}</span></div></div></header>
+ ${custom?`<div class="wallpaper-active"><span>${I('check')} Используется своё изображение</span><button class="btn" data-action="theme-custom-disable">Вернуть фон темы</button></div>`:''}
+ <div class="theme-quick" role="group" aria-label="Популярные коллекции">${[['','Все фоны'],...sceneCollections.map(c=>[c.id,c.name])].map(([id,name])=>`<button type="button" class="btn" data-theme-collection="${id}" aria-pressed="${id===state.themeGroup}">${esc(name)}</button>`).join('')}</div>
  <div class="theme-tools"><label class="theme-filter"><span>Коллекция</span><select id="theme-group" aria-label="Коллекция тем"><option value="">Все коллекции</option>${collections.map(c=>`<option value="${c.id}" ${c.id===state.themeGroup?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label class="theme-filter theme-search"><span>Поиск темы</span><span class="input-icon">${I('search')}<input id="theme-search" type="search" placeholder="Например, северное сияние" maxlength="60" value="${esc(state.themeQuery)}"></span></label></div>
  <p class="theme-count muted small" id="theme-count" aria-live="polite"></p><div id="theme-results" class="theme-grid theme-results"></div>
  <div class="theme-classics" id="theme-classics" tabindex="-1"><div class="section-heading"><h3>Классические темы</h3><span class="muted small">Без фоновых эффектов</span></div><div class="theme-grid classic-grid">${classicThemes.map(themeCard).join('')}</div></div>`;
@@ -395,14 +408,64 @@ function drawThemeResults(){
 function drawThemes(){
  const host=$('#themes');host.innerHTML=themeGallery();
  applyThemeCardStyle(host);drawThemeResults();
- $('#theme-group').onchange=e=>{state.themeGroup=e.target.value;drawThemeResults();};
+ function selectGroup(id){
+  state.themeGroup=id;$('#theme-group').value=id;
+  for(const chip of host.querySelectorAll('[data-theme-collection]'))chip.setAttribute('aria-pressed',String(chip.dataset.themeCollection===id));
+  drawThemeResults();
+ }
+ $('#theme-group').onchange=e=>selectGroup(e.target.value);
+ for(const chip of host.querySelectorAll('[data-theme-collection]'))chip.onclick=()=>selectGroup(chip.dataset.themeCollection);
  $('#theme-search').oninput=e=>{state.themeQuery=e.target.value;drawThemeResults();};
 }
 function previewTheme(id){
  const theme=getTheme(id),active=theme.id===state.settings.theme;
- showDialog(esc(theme.name),`<div class="theme-demo" data-theme-id="${theme.id}" data-demo-group="${theme.group}">${miniature(theme,false)}<span class="theme-demo-shade" aria-hidden="true"></span><span class="theme-atmosphere" aria-hidden="true"></span><div class="theme-demo-ui" aria-hidden="true"><span class="theme-demo-logo">B</span><strong>ByAzen</strong><span>Каталог</span><span>Библиотека</span></div><div class="theme-demo-detail" aria-hidden="true"><strong>${esc(theme.category)}</strong><span>${esc(theme.effect)}</span></div></div><p class="theme-preview-summary muted small">${theme.asset?`Эффект: ${esc(theme.effect)}. Фон используется во всех разделах лаунчера.`:'Однотонный фон без анимации.'}</p><div class="dialog-actions"><button type="button" class="btn" data-action="close">${active?'Закрыть':'Отмена'}</button>${active?'':`<button type="button" class="btn primary" data-action="theme" data-theme-id="${theme.id}">${I('check')} Применить тему</button>`}</div>`,{variant:'theme',eyebrow:'ПРЕДПРОСМОТР ТЕМЫ'});
+ showDialog(esc(theme.name),`<div class="theme-demo" data-theme-id="${theme.id}" data-demo-group="${theme.atmosphere||theme.group}">${miniature(theme,false)}<span class="theme-demo-shade" aria-hidden="true"></span><span class="theme-atmosphere" aria-hidden="true"></span><div class="theme-demo-ui" aria-hidden="true"><span class="theme-demo-logo">B</span><strong>ByAzen</strong><span>Каталог</span><span>Библиотека</span></div><div class="theme-demo-detail" aria-hidden="true"><strong>${esc(theme.category)}</strong><span>${esc(theme.effect)}</span></div></div><p class="theme-preview-summary muted small">${theme.asset?`Эффект: ${esc(theme.effect)}. ${state.wallpaper?.enabled?'Чтобы увидеть этот фон в лаунчере, нажми «Вернуть фон темы».':'Фон используется во всех разделах лаунчера.'}`:'Однотонный фон без анимации.'}</p><div class="dialog-actions"><button type="button" class="btn" data-action="close">${active?'Закрыть':'Отмена'}</button>${active?'':`<button type="button" class="btn primary" data-action="theme" data-theme-id="${theme.id}">${I('check')} Применить тему</button>`}</div>`,{variant:'theme',eyebrow:'ПРЕДПРОСМОТР ТЕМЫ'});
  applyThemeCardStyle(dialog);
 }
+function customWallpaperDialog(){
+ showDialog('Свой фон',`<div id="wallpaper-picker"><div class="wallpaper-draft"><img alt="Предпросмотр своего фона" hidden><div class="wallpaper-placeholder">${I('plus')}<strong>Твоё изображение</strong><span>JPG, PNG или WebP до 16 МБ</span></div></div><div class="wallpaper-controls"><input id="wallpaper-file" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" hidden><button type="button" class="btn" id="wallpaper-choose">${I('folder')} Выбрать изображение</button><label class="theme-filter"><span>Размещение</span><select id="wallpaper-fit"><option value="cover">Заполнить</option><option value="contain">Вписать</option></select></label></div><p id="wallpaper-status" class="muted small" role="status"></p><div class="dialog-actions">${state.wallpaper?'<button class="btn danger" type="button" id="wallpaper-clear">Удалить свой фон</button>':''}<button class="btn" type="button" data-action="close">Отмена</button><button class="btn primary" type="button" id="wallpaper-apply">${I('check')} Установить фон</button></div></div>`,{variant:'theme',eyebrow:'ЛОКАЛЬНОЕ ИЗОБРАЖЕНИЕ'});
+ const panel=$('#wallpaper-picker'),file=$('#wallpaper-file',panel),select=$('#wallpaper-fit',panel),status=$('#wallpaper-status',panel);
+ const choose=$('#wallpaper-choose',panel),apply=$('#wallpaper-apply',panel),clear=$('#wallpaper-clear',panel);
+ const preview=$('.wallpaper-draft img',panel),placeholder=$('.wallpaper-placeholder',panel);
+ let draft=state.wallpaper,draftURL,busy=false;
+ const stillOpen=()=>panel.isConnected&&dialog.open;
+ disposeWallpaperPreview=()=>{if(draftURL)URL.revokeObjectURL(draftURL);disposeWallpaperPreview=undefined;};
+ function refresh(){
+  if(draftURL)URL.revokeObjectURL(draftURL);
+  draftURL=draft?URL.createObjectURL(draft.blob):undefined;
+  preview.hidden=!draftURL;placeholder.hidden=Boolean(draftURL);
+  if(draftURL)preview.src=draftURL;else preview.removeAttribute('src');
+  select.value=draft?.fit||'cover';preview.dataset.fit=select.value;
+  status.textContent=draft?.name||'Файл остаётся на этом устройстве.';
+  status.classList.remove('is-error');
+ }
+ function controls(on){
+  busy=on;choose.disabled=on;select.disabled=on||!draft;apply.disabled=on||!draft;if(clear)clear.disabled=on;
+ }
+ refresh();controls(false);
+ choose.onclick=()=>file.click();
+ select.onchange=()=>{preview.dataset.fit=select.value;draft={...draft,fit:select.value};};
+ file.onchange=async()=>{
+  const chosen=file.files[0];file.value='';if(!chosen||busy)return;
+  controls(true);status.textContent='Подготавливаем изображение…';
+  try{const next=await prepareWallpaper(chosen);if(stillOpen()){draft=next;refresh();}}
+  catch(e){if(stillOpen()){status.textContent=e.message;status.classList.add('is-error');}}
+  finally{controls(false);}
+ };
+ async function update(record,message){
+  controls(true);
+  try{
+   await saveWallpaper(record);setWallpaper(record);applyTheme();
+   if(stillOpen())dialog.close();
+   if(state.section==='settings'){drawThemes();$('[data-action=theme-custom]')?.focus({preventScroll:true});}
+   toast(message);
+  }catch(e){if(stillOpen()){status.textContent=e.message;status.classList.add('is-error');}else toast(e.message,true);}
+  finally{controls(false);}
+ }
+ apply.onclick=()=>update({...draft,enabled:true},'Свой фон установлен.');
+ if(clear)clear.onclick=()=>update(null,'Свой фон удалён.');
+}
+dialog.addEventListener('close',()=>{if(!dialog.open)disposeWallpaperPreview?.();});
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
  <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button></div>
@@ -476,6 +539,17 @@ async function dispatch(b){
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
   case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
   case 'theme-preview':return previewTheme(d.themeId);
+  case 'theme-custom':return customWallpaperDialog();
+  case 'theme-custom-disable':{
+   if(!state.wallpaper?.enabled)return;
+   b.disabled=true;
+   try{
+    const record={...state.wallpaper,enabled:false};await saveWallpaper(record);
+    setWallpaper(record);applyTheme();if(state.section==='settings'){drawThemes();$('[data-action=theme-custom]')?.focus({preventScroll:true});}
+    toast('Возвращён фон темы.');
+   }finally{b.disabled=false;}
+   return;
+  }
   case 'theme-random':{
    const candidates=findThemes(state.themeGroup,state.themeQuery).filter(t=>t.id!==state.settings.theme);
    const pool=candidates.length?candidates:visualThemes.filter(t=>t.id!==state.settings.theme);
@@ -499,4 +573,4 @@ $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('s
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-run(async()=>{try{state.settings=await api.settings();applyTheme();state.library=await api.library();}finally{sidebar();await render();}});
+run(async()=>{try{state.settings=await api.settings();setWallpaper(await readWallpaper().catch(()=>null));applyTheme();state.library=await api.library();}finally{sidebar();await render();}});

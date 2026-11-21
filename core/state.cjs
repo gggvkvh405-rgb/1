@@ -1,10 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {searchSources,availability,sourceMatches} = require('../public/source-search.js');
+const {isTheme}=require('../public/themes.js');
 const defaults = {name:'Игрок', theme:'dark', motion:false, region:'DE'};
 function updateSettings(raw = {}) {
   return {name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0,32) : defaults.name,
-    theme: typeof raw.theme === 'string' && /^(dark|light|oled|theme-(?:[0-9]|[1-9][0-9]))$/.test(raw.theme) ? raw.theme : defaults.theme,
+    theme: isTheme(raw.theme) ? raw.theme : defaults.theme,
     motion: raw.motion === true, region: ['DE','US','GB','FR','PL','CA','UA','KZ','BR','JP','RU'].includes(raw.region) ? raw.region : defaults.region};
 }
 function readState(file) {
