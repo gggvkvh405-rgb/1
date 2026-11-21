@@ -52,3 +52,11 @@ test('manual source search ranks across feeds and paginates without losing match
  assert.equal(searchSources(data,'portal maps').games[0].title,'Portal 2 Extra Maps');
  s.games=[game('Different game')];assert.equal(searchSources(data,'portal').total,0);
 });
+
+test('advertising suffixes and multiplayer build labels in a Hydra feed do not hide the base game',()=>{
+ const rows=[game('Elden Ring v1.10.1-Multiplayer Free Download'),game('Elden Ring: Shadow of the Erdtree Free Download (v1.1)'),game('Hollow Knight Free Download (v1.5.78.11833)'),game('Hollow Knight Silksong Free Download (Build 42)'),game('Operation: Tango Free Download (v2.01.03 & Multiplayer)'),game('Terraria Build 13650765 Free Download'),game('Elden Ring Free Download [Demo]')];
+ const source=[group('a','Shisuy style fixture',true,rows)];
+ for(const [query,index] of [['Elden Ring',0],['Hollow Knight',2],['Operation Tango',4],['Terraria',5]]){
+  assert.deepEqual(sourceMatches(source,query)[0].entries.map(e=>e.index),[index]);
+ }
+});

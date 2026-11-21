@@ -64,12 +64,12 @@ function checklist(items, selected, name, label){
  return `<div class="catalog-check-group"><input class="facet-search" type="search" placeholder="Фильтр…" aria-label="${label}" autocomplete="off"><div class="catalog-options">${items.map(([id,text])=>`<label class="toggle"><input type="checkbox" name="${name}" value="${esc(id)}" ${selected.includes(id)?'checked':''}><span>${esc(text)}</span></label>`).join('')}</div><p class="facet-no-match muted" hidden>Нет совпадений</p></div>`;
 }
 async function catalog(n){
- const f=state.filter, selected=String(f.tags||'').split(',').filter(Boolean);
+ const f=state.filter, term=f.term?.trim()||'', selected=String(f.tags||'').split(',').filter(Boolean);
  const liveFields=properties.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||'',label)}</label>`).join('');
  content.innerHTML=`<form id="catalog-form" class="catalog-layout ${catalogLocal.mobileOpen?'filters-open':''}">
- <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p>${f.term?.trim()?btn('Искать в источниках','search-sources','layers','catalog-source-search'):''}</div>
+ <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p></div>
  <div class="catalog-sort"><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
- <section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section>
+ <div class="catalog-result-stack">${term?`<section id="catalog-feed-results" class="catalog-feed-results" aria-labelledby="catalog-feed-title"><div class="catalog-feed-header"><h2 id="catalog-feed-title">${I('layers')} В подключённых источниках</h2>${btn('Искать в источниках','search-sources','arrow')}</div><div class="catalog-feed-summary" role="status">Ищем по загруженным спискам…</div><div class="catalog-feed-items"></div></section>`:''}${term?`<h2 class="catalog-steam-title">${I('steam')} Результаты Steam</h2>`:''}<section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section></div>
  <aside id="catalog-filters" class="catalog-filters" aria-label="Фильтры каталога"><div class="catalog-filter-scroll">
  <div class="catalog-era" aria-label="Фильтр по эпохе"><button type="button" data-era="modern">${I('grid')}Современные игры</button><button type="button" data-era="classic">${I('game')}Классика</button></div>
  ${facet('year','Год выпуска',`<p class="facet-help">Год выпуска на этой странице</p><div class="year-labels"><output id="year-low"></output><output id="year-high"></output></div><div class="year-track"><div></div>${yearBox('minYear',FIRST_YEAR,LAST_YEAR,catalogLocal.min,'Минимальный год выпуска')}${yearBox('maxYear',FIRST_YEAR,LAST_YEAR,catalogLocal.max,'Максимальный год выпуска')}</div>`)}
@@ -80,6 +80,7 @@ async function catalog(n){
  </div><div class="catalog-apply">${btn('Сбросить','reset-filters')}<button type="submit" class="btn primary">${I('search')} Применить</button></div>
  </aside></form>`;
  const form=$('#catalog-form'), results=$('#catalog-results'), sourceBox=$('#catalog-source-options');
+ if(term)void loadCatalogFeeds(n,term);
  let pageResult, offlineReason='', pageMatches=new Map(), shownKeys=null;
  function drawPage(){
   if(!pageResult||!current(n))return;
@@ -159,6 +160,25 @@ async function catalog(n){
   if(!current(n))return;
   pageMatches=new Map(availability.map(x=>[x.title,x.sources]));drawPage();
  }catch{/* Missing source information must not block Steam results. */}
+}
+let catalogFeedGames=[];
+async function loadCatalogFeeds(n,term){
+ const root=$('#catalog-feed-results');
+ if(!root||!current(n))return;
+ const summary=$('.catalog-feed-summary',root), items=$('.catalog-feed-items',root);
+ try{
+  const [result, feeds]=await Promise.all([api.searchSources(term,1),api.sources()]);
+  if(!current(n))return;
+  const active=feeds.filter(feed=>feed.enabled);
+  const pending=active.filter(f=>f.loading||f.presetName&&!f.updated&&!f.syncError).length;
+  const failed=active.filter(f=>f.syncError).length;
+  const text=result.total?`Найдено записей: ${result.total.toLocaleString('ru')}.`:active.length?'В загруженных списках совпадений пока нет.':'Нет включённых списков для поиска.';
+  summary.textContent=[text,pending?`Списки ещё загружаются: ${pending}.`:'',failed?`Ошибки обновления: ${failed}.`:''].filter(Boolean).join(' ');
+  catalogFeedGames=result.games.slice(0,6);
+  const html=catalogFeedGames.map((game,i)=>`<button class="catalog-feed-game" type="button" data-action="catalog-feed-game" data-index="${i}"><span class="catalog-feed-art">${I('game')}</span><span><strong>${esc(game.title)}</strong><small>${[game.source,game.size].filter(Boolean).map(esc).join(' · ')}</small></span>${I('chevron')}</button>`).join('');
+  if(items._markup!==html){items.innerHTML=html;items._markup=html;reveal(items,'.catalog-feed-game','rise');}
+  if(pending)setTimeout(()=>loadCatalogFeeds(n,term),2000);
+ }catch(e){if(current(n))summary.textContent=`Не удалось выполнить поиск: ${e.message}`;}
 }
 function rankings(){
  content.innerHTML=`${head('МАГАЗИН STEAM','Рейтинги','Смотрите оценки игр и официальные чарты магазина Steam.')}
@@ -336,6 +356,7 @@ function dispatch(b){
   case 'rerender':return render();
   case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
   case 'search-sources':return searchInSources(state.filter.term);
+  case 'catalog-feed-game':{const game=catalogFeedGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
   case 'source-page':state.srcPage=Number(d.page);return loadSourceGames(renderId);
   case 'library-tab':state.libraryFilter=d.tab;return render();
   case 'new-game':return editGame();
