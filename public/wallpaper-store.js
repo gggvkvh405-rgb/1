@@ -70,3 +70,26 @@ export async function readWallpaper(){
 export function saveWallpaper(value){
  return transact('readwrite',s=>value?s.put(value,'custom'):s.delete('custom'));
 }
+export const slideshowIO={
+ read:async()=>{const rows=await transact('readonly',s=>s.get('slides'));return Array.isArray(rows)?rows.filter(x=>x instanceof Blob&&x.type==='image/jpeg'&&x.size>0&&x.size<=MAX_INPUT).slice(0,12):[];},
+ save:rows=>transact('readwrite',s=>rows.length?s.put(rows,'slides'):s.delete('slides'))
+};
+export async function deriveAccent(pic){
+ if(!pic)throw Error('Сначала выберите фон.');
+ await pic.decode();
+ const canvas=document.createElement('canvas');canvas.width=24;canvas.height=24;
+ const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(pic,0,0,24,24);
+ return paletteAccent(ctx.getImageData(0,0,24,24).data);
+}
+export function paletteAccent(rgba){
+ const boxes=new Map();
+ for(let i=0;i<rgba.length;i+=4){
+  if(rgba[i+3]<128)continue;
+  const r=rgba[i],g=rgba[i+1],b=rgba[i+2],hi=Math.max(r,g,b),lo=Math.min(r,g,b),s=hi-lo;
+  if(hi<38||s<18)continue;
+  const key=((r>>5)<<6)|((g>>5)<<3)|(b>>5),weight=1+s/80,v=boxes.get(key)||[0,0,0,0];
+  v[0]+=r*weight;v[1]+=g*weight;v[2]+=b*weight;v[3]+=weight;boxes.set(key,v);
+ }
+ const first=[...boxes.values()].sort((a,b)=>b[3]-a[3])[0];
+ return first?'#'+first.slice(0,3).map(v=>Math.round(v/first[3]).toString(16).padStart(2,'0')).join(''):'#bfa9ff';
+}

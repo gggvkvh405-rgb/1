@@ -1,4 +1,4 @@
-const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session, clipboard} = require('electron');
+const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session, clipboard, Tray, Menu, nativeImage} = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const {randomUUID} = require('node:crypto');
@@ -10,6 +10,8 @@ const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
 const {transferOptions,cleanHash}=require('../core/transfer-policy.cjs');
+const {updateBatch,prepareMove,applyMove,findScreenshots,readScreenshot}=require('../core/library-batch.cjs');
+const {cleanDate,localDay}=require('../public/journal.js');
 const {checkDownload}=require('../core/download-check.cjs');
 const {SaveBackups}=require('../core/save-backups.cjs');
 const {discoverExecutables,discoverSteam,importSelected,steamId,directory}=require('../core/installed-games.cjs');
@@ -30,12 +32,44 @@ async function bootstrap() {
   const data = readState(file);
   await fs.mkdir(path.dirname(file),{recursive:true});
   const copies=new SaveBackups(path.dirname(file));
-  const persist = () => {try { saveState(file,data); } catch (e) { console.error('State:',e.message); window?.webContents.send('storage-error',e.message); }};
-  let window;
+  let transferStates=new Map(data.downloads.map(job=>[job.id,job.status])),sourceStates=new Map(data.sources.map(source=>[source.id,source.updated]));
+  function collectNotifications(){
+    for(const j of data.downloads)if(transferStates.get(j.id)!==j.status&&['done','error'].includes(j.status))pushNotice(j.status==='done'?'Загрузка завершена':'Ошибка загрузки',j.title,'downloads');
+    for(const s of data.sources)if(s.updated&&sourceStates.get(s.id)!==s.updated)pushNotice('Обновлён список источника',s.name,'sources');
+    transferStates=new Map(data.downloads.map(j=>[j.id,j.status]));sourceStates=new Map(data.sources.map(s=>[s.id,s.updated]));
+  }
+  function pushNotice(title,detail,target){
+    data.notifications.unshift({id:randomUUID(),title,detail:String(detail||'').slice(0,140),target,at:new Date().toISOString()});data.notifications.splice(80);
+    if(window&&!window.isDestroyed())window.webContents.send('notice-changed');
+  }
+  const persist = () => {try { collectNotifications();saveState(file,data); } catch (e) { console.error('State:',e.message); if(window&&!window.isDestroyed())window.webContents.send('storage-error',e.message); }};
+  let window,tray;
   const queue = new DownloadQueue(data.downloads,persist,{options:data.downloadOptions});
   app.once('before-quit',()=>queue.dispose());
   let downloadCheck;
-  const previews = new Map(),exeTokens = new Map(),installPlans=new Map(),restorePlans=new Map();
+  function showApp(section){
+    if(!window||window.isDestroyed())return;
+    if(window.isMinimized())window.restore();window.show();window.focus();
+    if(section)window.webContents.send('go-section',section);
+  }
+  function syncTray(){
+    if(!window||window.isDestroyed())return;
+    if(!data.settings.personal.tray){if(tray){tray.destroy();tray=null;}return;}
+    if(tray)return;
+    const img=nativeImage.createFromPath(path.join(root,'assets','tray.png'));
+    if(img.isEmpty())return;
+    tray=new Tray(img);tray.setToolTip('ByAzen');tray.on('click',()=>showApp());
+    const menu=()=>Menu.buildFromTemplate([
+      {label:'Открыть ByAzen',click:()=>showApp()},
+      {label:`Загрузки · ${queue.list().filter(j=>j.status==='running').length} активных`,click:()=>showApp('downloads')},
+      {label:'Пауза для очереди',click:()=>{for(const job of queue.list())if(job.status==='queued'||job.status==='running'&&job.phase!=='saving')void queue.action(job.id,'pause').catch(()=>{});}},
+      {type:'separator'},{label:'Выход',click:()=>app.quit()}
+    ]);
+    tray.setContextMenu(menu());tray.on('right-click',()=>{tray.setContextMenu(menu());});
+  }
+  app.on('second-instance',()=>showApp());
+  app.once('before-quit',()=>{tray?.destroy();tray=null;});
+  const previews = new Map(),exeTokens = new Map(),installPlans=new Map(),restorePlans=new Map(), movePlans=new Map(), screenshotPlans=new Map();
   const folderKinds=new Set(['saves','screenshots','mods']);
   let maintenance=false,scanning=false;
   function withMaintenance(fn){
@@ -96,7 +130,7 @@ async function bootstrap() {
   if(installPresets(data))persist();
   const actions = {
     settings: () => data.settings,
-    saveSettings: (x) => { data.settings = updateSettings(x); persist(); return data.settings; },
+    saveSettings: (x) => { data.settings = updateSettings(x); persist();syncTray();return data.settings; },
     steam: searchSteam,
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
@@ -156,6 +190,56 @@ async function bootstrap() {
     },
     library: () => data.library,
     scanLibrary,
+    saveBatch: (ids,patch) => withMaintenance(()=>{const result=updateBatch(data.library,ids,patch);persist();return result;}),
+    previewMove: old => withMaintenance(async()=>{
+      const next=await pickFolder('Выберите новую папку с играми');if(!next)return null;
+      const plan=await prepareMove(data.library,old,next);return {draft:token(movePlans,plan),moves:plan.moves,skipped:plan.skipped,truncated:plan.truncated};
+    }),
+    applyMove: draft => withMaintenance(async()=>{
+      const plan=movePlans.get(draft);if(!plan)throw Error('Откройте предпросмотр путей повторно.');
+      const result=await applyMove(data.library,plan);movePlans.delete(draft);persist();return result;
+    }),
+    screenshots: async id => {
+      const g=game(id),folder=folderOf(g,'screenshots');if(!folder)throw Error('Сначала выберите папку скриншотов в «Папках».');
+      const plan=await findScreenshots(folder);return {draft:token(screenshotPlans,plan),items:plan.items.map(({title,date})=>({title,date}))};
+    },
+    screenshot: (draft,index) => {
+      const plan=screenshotPlans.get(draft);if(!plan)throw Error('Откройте галерею заново.');
+      return readScreenshot(plan,index);
+    },
+    journal: () => data.journal,
+    journalChange: (kind,value) => {
+      const journal=data.journal;
+      if(kind==='goal'){
+        if(!Number.isInteger(value)||value<0||value>50)throw Error('Цель должна быть от 0 до 50.');
+        journal.goal=value;
+      }else if(kind==='delete-moment')journal.moments=journal.moments.filter(m=>m.id!==value);
+      else if(kind==='session'||kind==='moment'){
+        const g=game(value?.id),day=cleanDate(value?.day);
+        if(!day||day>localDay())throw Error('Выберите дату не позднее сегодняшней.');
+        if(kind==='session'){
+          if(!Number.isInteger(value.minutes)||value.minutes<1||value.minutes>1440)throw Error('Укажите длительность от 1 до 1 440 минут.');
+          journal.sessions.push({id:randomUUID(),gameId:g.id,title:g.title,day,seconds:value.minutes*60,manual:true});journal.sessions=journal.sessions.slice(-4000);
+        }else{
+          const title=typeof value.title==='string'?value.title.trim().slice(0,200):'';
+          if(!title)throw Error('Назовите игровой момент.');
+          journal.moments.push({id:randomUUID(),gameId:g.id,day,title});journal.moments=journal.moments.slice(-300);
+        }
+      }else throw Error('Неизвестное действие журнала.');
+      persist();return journal;
+    },
+    notifications:() => data.notifications,
+    clearNotifications:() => {data.notifications=[];persist();},
+    saveExport: async (kind,payload) => {
+      const exts={theme:['json','ByAzen-theme'],csv:['csv','ByAzen-journal'],year:['png','ByAzen-year']};
+      if(!Object.hasOwn(exts,kind)||typeof payload!=='string')throw Error('Неверный формат экспорта.');
+      const [ext,name]=exts[kind],binary=kind==='year';
+      if(payload.length>(kind==='theme'?24*1024*1024:4*1024*1024))throw Error('Файл слишком большой.');
+      if(binary&&!/^iVBORw0KGgo[A-Za-z0-9+/=]+$/.test(payload))throw Error('Ожидается PNG.');
+      const {filePath}=await dialog.showSaveDialog(window,{defaultPath:name+'.'+ext,filters:[{name:ext.toUpperCase(),extensions:[ext]}]});
+      if(!filePath)return false;
+      await fs.writeFile(filePath,binary?Buffer.from(payload,'base64'):payload);return true;
+    },
     importInstalledGames: (draft,indices) => withMaintenance(async()=>{
       const found=installPlans.get(draft);if(!found)throw Error('Откройте новый предпросмотр импорта.');
       const result=await importSelected(data.library,found,indices);installPlans.delete(draft);persist();return result;
@@ -198,8 +282,9 @@ async function bootstrap() {
       const values = cleanGame(raw); const old = id ? find(data.library,id) : null;
       const exe = exeToken ? exeTokens.get(exeToken) : old?.exe || '';
       if (exeToken) {await prepareLaunch(exe); exeTokens.delete(exeToken);}
-      if (old){Object.assign(old,values,{exe});if(exeToken)delete old.steamAppId;}
-      else {if (data.library.length >= 1500) throw Error('В библиотеке уже 1500 игр.'); data.library.push({...values,exe,id:randomUUID(),lastPlayed:''});}
+      const finishedAt=values.progress==='finished'?(old?.progress==='finished'?(old.finishedAt||''):localDay()):'';
+      if(old){Object.assign(old,values,{exe,finishedAt});if(exeToken)delete old.steamAppId;}
+      else {if(data.library.length>=1500)throw Error('В библиотеке уже 1500 игр.');data.library.push({...values,exe,id:randomUUID(),lastPlayed:'',finishedAt});}
       persist();
     },
     favorite: id => { const g = find(data.library,id); g.favorite = !g.favorite; persist(); },
@@ -211,8 +296,15 @@ async function bootstrap() {
       const args=g.profiles[profile]?.args||[];
       if(!steam)await prepareLaunch(g.exe,args);
       if(g.autoSaveBackup===true)await copies.make(g.id,savesOf(g),{automatic:true});
-      if(steam)await shell.openExternal(`steam://rungameid/${g.steamAppId}`);else await launchGame(g.exe,args);
-      g.lastPlayed=new Date().toISOString();persist();
+      if(steam)await shell.openExternal(`steam://rungameid/${g.steamAppId}`);
+      else{
+        const child=await launchGame(g.exe,args),start=performance.now(),day=localDay(),title=g.title;
+        child.once('exit',()=>{
+          const seconds=Math.min(86400,Math.round((performance.now()-start)/1000));if(seconds<1)return;
+          data.journal.sessions.push({id:randomUUID(),gameId:g.id,title,day,seconds,manual:false});data.journal.sessions=data.journal.sessions.slice(-4000);persist();
+        });
+      }
+      g.lastPlayed=new Date().toISOString();g.lastProfile=profile<0?null:JSON.stringify(g.profiles[profile]);persist();
     }),
     downloads: () => queue.list(),
     downloadInfo: () => ({items:queue.list(),options:data.downloadOptions,allowed:queue.allowed(),version:app.getVersion()}),
@@ -269,6 +361,8 @@ async function bootstrap() {
     catch (e) { return {error:e.message || 'Не удалось выполнить действие.'}; }
   });
   window = new BrowserWindow({width:1440,height:900,minWidth:720,minHeight:480,show:false,backgroundColor:'#101010',title:'ByAzen',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,webSecurity:true}});
+  syncTray();
+  window.on('minimize',()=>{if(tray)window.hide();});
   window.webContents.setWindowOpenHandler(() => ({action:'deny'}));
   window.webContents.on('will-navigate', e => e.preventDefault());
   window.once('ready-to-show', () => {window.maximize(); window.show();});
@@ -277,7 +371,6 @@ async function bootstrap() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => {const w = BrowserWindow.getAllWindows()[0]; if (w) {if (w.isMinimized()) w.restore(); w.focus();}});
   app.whenReady().then(bootstrap).catch(e => {dialog.showErrorBox('ByAzen',e.message); app.quit();});
   app.on('window-all-closed',()=>app.quit());
 }

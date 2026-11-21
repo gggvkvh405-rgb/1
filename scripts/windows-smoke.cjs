@@ -1,0 +1,51 @@
+// Used only by CI, against a throwaway portable profile and a loopback DevTools port.
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+const path=require('node:path');
+const {setTimeout:delay}=require('node:timers/promises');
+const profile=path.resolve('release','ByAzen-data');
+const stateFile=path.join(profile,'state.json');
+async function seed(){
+  const exe=path.join(process.env.SystemRoot,'System32','PING.EXE');await fs.access(exe);
+  await fs.mkdir(profile,{recursive:true});
+  await fs.writeFile(stateFile,JSON.stringify({settings:{startSection:'journal'},library:[{id:'fixture',title:'CI session',exe,collections:[],profiles:[{name:'Fixture',args:['-n','3','127.0.0.1']}]}]}));
+}
+async function smoke(){
+  let target;
+  for(let i=0;i<20&&!target;i++){
+    try{const tabs=await fetch('http://127.0.0.1:9225/json/list',{signal:AbortSignal.timeout(800)}).then(r=>r.json());target=tabs.find(x=>x.url==='byazen://app/'&&x.webSocketDebuggerUrl);}catch{}
+    if(!target)await delay(500);
+  }
+  assert.ok(target,'Electron renderer did not appear on the test port');
+  const socket=new WebSocket(target.webSocketDebuggerUrl),pending=new Map();let id=0;
+  socket.addEventListener('message',({data})=>{const message=JSON.parse(String(data));const task=pending.get(message.id);if(!task)return;pending.delete(message.id);message.error?task.reject(Error(message.error.message)):task.resolve(message.result);});
+  try{
+    await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
+    async function evaluate(expression){
+      const i=++id,request=new Promise((resolve,reject)=>pending.set(i,{resolve,reject}));socket.send(JSON.stringify({id:i,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));
+      const {result,exceptionDetails}=await request;if(exceptionDetails)throw Error(result.description||exceptionDetails.text);return result.value;
+    }
+    const result=await evaluate(`(async()=>{
+      const wait=ms=>new Promise(r=>setTimeout(r,ms));
+      for(let i=0;i<30&&!document.querySelector('#journal-goal');i++)await wait(100);
+      if(!document.querySelector('#journal-goal')||typeof require!=='undefined')throw Error('UI or isolation check failed');
+      const api=window.byazen,settings=await api.settings();
+      await api.saveSettings({...settings,personal:{...settings.personal,tray:true}});
+      await api.saveSettings({...settings,personal:{...settings.personal,tray:false}});
+      await api.journalChange('goal',3);
+      await api.launchGame('fixture',0);
+      for(let i=0;i<50;i++){
+        const {sessions,goal}=await api.journal();
+        const s=sessions.find(s=>s.gameId==='fixture'&&!s.manual);
+        if(s)return {wall:!!document.querySelector('#theme-wall'),seconds:s.seconds,goal};
+        await wait(100);
+      }
+      throw Error('ByAzen did not track the Windows process');
+    })()`);
+    assert.equal(result.wall,true);assert.ok(result.seconds>=1);assert.equal(result.goal,3);
+    const state=JSON.parse(await fs.readFile(stateFile,'utf8'));assert.equal(state.settings.personal.tray,false);assert.equal(state.library[0].lastProfile,JSON.stringify({name:'Fixture',args:['-n','3','127.0.0.1']}));assert.equal(state.journal.goal,3);
+    console.log('Windows portable renderer, isolated preload, tray create/remove, EXE session and journal state verified.');
+  }finally{socket.close();}
+}
+const watchdog=setTimeout(()=>{console.error('Windows smoke test timed out');process.exit(1);},30000);
+(process.argv[2]==='--seed'?seed():smoke()).catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>clearTimeout(watchdog));

@@ -1,7 +1,12 @@
+import {cleanPersonal,wallpaperTheme,keyFromEvent} from './personal-options.js';
+import {setupPersonal,setupGamepad,showIntro,themeTone} from './personal-tools.js';
+import {packTheme,unpackTheme} from './theme-package.js';
+import {makeJournalView} from './journal-view.js';
+import {makeLibraryWave} from './library-wave.js';
 import {cleanAppearance,applyAppearance} from './appearance.js';
 import {libraryTools} from './library-tools.js';
 import {humanBytes,isHistory,transferLabel,rateLabel,discoveryLabel} from './download-view.js';
-import {prepareWallpaper,readWallpaper,saveWallpaper} from './wallpaper-store.js';
+import {prepareWallpaper,readWallpaper,saveWallpaper,slideshowIO,deriveAccent} from './wallpaper-store.js';
 import {collections,sceneCollections,sceneThemes,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
 import {openDownloadPicker} from './download-picker.js';
 import {motionAllowed,syncMotion,play,reveal,revealSection} from './motion.js';
@@ -12,28 +17,36 @@ import {genres,tags,sorts,properties,FIRST_YEAR,CLASSIC_UNTIL,LAST_YEAR,normaliz
 const api = window.byazen || browser;
 const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
-const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
+const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],journal:['Журнал','clock'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null,downloadTab:'active'};
-let renderId=0,customURL,disposeWallpaperPreview;
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null,slides:[],downloadTab:'active'};
+let renderId=0,customURL,disposeWallpaperPreview,slideURL,slideIndex=0,slideStarted=0,sessionNotices=[];
+function rememberToast(text,error){
+ if(!error)return;
+ $('#notice-shortcut').dataset.new='true';
+ sessionNotices.unshift({at:new Date().toISOString(),title:'Сообщение ByAzen',detail:String(text).slice(0,380)});sessionNotices.splice(35);
+ try{localStorage.setItem('byazen-ui-alerts',JSON.stringify(sessionNotices));}catch{}
+}
+try{const old=JSON.parse(localStorage.getItem('byazen-ui-alerts')||'[]');if(Array.isArray(old))sessionNotices=old.slice(0,35);}catch{}
+const applySaved=async patch=>{state.settings=await api.saveSettings({...state.settings,...patch});applyTheme();sidebar();if(Object.hasOwn(patch,'theme')&&$('#themes'))drawThemes();return state.settings;};
 const details = (icon,title,desc,action='')=>`<div class="empty"><span class="empty-icon">${I(icon)}</span><h3>${esc(title)}</h3><p>${esc(desc)}</p>${action}</div>`;
 const btn = (label,action,glyph='',classes='')=>`<button type="button" class="btn ${classes}" data-action="${action}">${glyph?I(glyph):''}${label}</button>`;
 const head = (eyebrow,title,desc,actions='')=>`<div class="page-head"><div><div class="eyebrow"><i></i>${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div>${actions?`<div class="head-actions">${actions}</div>`:''}</div>`;
 const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria-label="${esc(label)}">${items.map(([v,t])=>`<option value="${esc(v)}" ${v===selected?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
 const current = (n)=>n===renderId;
-function toast(text,error=false){const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
+function toast(text,error=false){rememberToast(text,error);if(state.settings.personal?.sound)void themeTone(state.settings.personal.sound,state.settings.personal.volume,'notice');const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
 function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing){disposeWallpaperPreview?.();dialog.close();}dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
 function sidebar(){
- $('#nav').innerHTML=Object.entries(sections).filter(([id])=>id!=='sources').map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
+ $('#nav').innerHTML=cleanPersonal(state.settings.personal).nav.map(id=>[id,sections[id]]).map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
  const shortcut=$('#source-shortcut');
  if(state.section==='sources')shortcut.setAttribute('aria-current','page');else shortcut.removeAttribute('aria-current');
  $('#profile').innerHTML=`<span class="avatar">${I('user')}</span><span class="profile-text"><strong>${esc(state.settings.name)}</strong><small>ByAzen</small></span><img class="profile-brand" src="assets/logo.svg" alt="">${I('down','profile-arrow')}`;
  $('#side-games').innerHTML=state.library.length ? [...state.library].sort((a,b)=>Number(b.favorite)-Number(a.favorite)||(b.lastPlayed||'').localeCompare(a.lastPlayed||'')).slice(0,6).map(g=>`<button class="side-game" data-action="edit-game" data-id="${esc(g.id)}" title="${esc(g.title)}">${I('game')}<span>${esc(g.title)}</span></button>`).join('') : `<button class="side-game muted" data-action="new-game" title="Добавить игру">${I('plus')}<span>Добавить игру</span></button>`;
 }
-function go(section){if(!Object.hasOwn(sections,section))return;const changed=section!==state.section;state.section=section;document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();if(changed)reveal($('.sidebar'),'[aria-current=page] svg','pop');run(render);}
-async function render(reason){const n=++renderId, section=state.section;content.dataset.section=section;const result=({home,catalog,library,downloads,rankings,sources,settings}[section])(n);revealSection(content,section,reason);return result;}
+function go(section){if(!Object.hasOwn(sections,section))return;const changed=section!==state.section;state.section=section;applyTheme();document.title=`${sections[section][0]} — ByAzen`;window.scrollTo(0,0);sidebar();if(changed)reveal($('.sidebar'),'[aria-current=page] svg','pop');run(render);}
+async function render(reason){const n=++renderId, section=state.section;content.dataset.section=section;const result=({home,catalog,library,downloads,rankings,sources,journal:journalView.render,settings}[section])(n);revealSection(content,section,reason);return result;}
 function rangeButtons(result,prefix){
  const rawLast=Math.ceil(result.total/result.pageSize);
  const last=Math.max(1,prefix==='steam'?Math.min(500,rawLast):rawLast);
@@ -42,6 +55,7 @@ function rangeButtons(result,prefix){
 
 const homeTabs=[['flame','Сейчас популярно'],['calendar','Лучшие игры недели'],['trophy','Игры с достижениями']];
 function home(n){
+ const recent=state.library.filter(g=>(g.exe||g.steamAppId)&&g.lastPlayed).sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed))[0];
  const f=games[state.featured], cyber=state.featured===0;
  const rows=state.tab===1?weeklyGames():state.tab===2?games.filter(g=>achievements.has(g.id)):games;
  content.innerHTML=`<section class="hero ${cyber?'cyber-hero':'alt-hero'}" aria-label="Избранная игра">
@@ -49,6 +63,7 @@ function home(n){
   <button class="hero-link" data-action="steam-${f.id}" title="Открыть игру" aria-label="Открыть ${esc(f.title)}"></button>
   <div class="hero-copy"><h1>${cyber?'<img src="assets/cyberpunk-logo.png" alt="Cyberpunk 2077">':esc(f.headline)}</h1><p>${esc(f.desc)}</p></div>
  </section>
+ ${recent?`<section class="pane continue-game"><div><div class="eyebrow">ПОСЛЕДНИЙ ЗАПУСК</div><h2>${esc(recent.title)}</h2></div><button type="button" class="btn primary" data-action="continue-game" data-id="${esc(recent.id)}">${I('play')} Продолжить игру</button></section>`:''}
  <div class="home-feed">
   <div class="discovery">
    <div class="tabs" aria-label="Подборки">${homeTabs.map(([glyph,name],j)=>`<button type="button" class="tab ${j===state.tab?'selected':''}" data-action="home-tab" data-tab="${j}" aria-pressed="${j===state.tab}" ${j===1?'title="Редакционная подборка, не рейтинг Steam"':''}>${I(glyph,`tab-glyph ${glyph}`)}${name}</button>`).join('')}</div>
@@ -200,13 +215,15 @@ function rankings(){
 const gameProgress=[['planned','Хочу пройти'],['playing','Играю'],['finished','Пройдено'],['shelved','Отложено']];
 const gameProgressLabel=Object.fromEntries(gameProgress);
 const gamesTools=libraryTools({api,dialog,showDialog,esc,icon:I,notify:toast,refreshLibrary,humanBytes});
+const libraryWave=makeLibraryWave({api,dialog,showDialog,esc,btn,get:()=>state.library,refresh:refreshLibrary,run,notify:toast});
+const journalView=makeJournalView({api,content,showDialog,dialog,esc,icon:I,head,btn,getLibrary:()=>state.library,exportFile,run,notify:toast,isCurrent:current});
 function library(){
  const collections=[...new Set(state.library.flatMap(g=>g.collections))].sort((a,b)=>a.localeCompare(b,'ru'));
  let rows=state.library.filter(g=>(state.libraryFilter==='all'||(state.libraryFilter==='fav'&&g.favorite)||(state.libraryFilter==='recent'&&g.lastPlayed))&&(!state.collection||g.collections.includes(state.collection))&&(!state.libraryProgress||g.progress===state.libraryProgress));
  if(state.libraryFilter==='recent')rows.sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed));
- content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
+ content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',`${api.scanLibrary?btn('Найти установленные','library-scan-local','search')+btn('Импорт Steam','library-scan-steam','steam'):''}${api.saveBatch?btn('Массовое редактирование','library-batch','edit'):''}${api.previewMove?btn('Исправить пути','library-move','folder'):''}${btn('Добавить игру','new-game','plus','primary')}`)}
  <div class="toolbar"><div class="tabs">${[['all','game','Все игры'],['fav','star','Избранное'],['recent','clock','Недавние']].map(([k,g,l])=>`<button class="tab ${state.libraryFilter===k?'selected':''}" data-action="library-tab" data-tab="${k}">${I(g)}${l}</button>`).join('')}</div><div class="row">${pick('collection',[['','Все коллекции'],...collections.map(c=>[c,c])],state.collection,'Коллекция')}${pick('library-progress',[['','Любой статус'],...gameProgress],state.libraryProgress,'Статус прохождения')}</div></div>
- ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
+ ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.steamAppId?'Запуск через Steam':g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}${(g.tags||[]).map(c=>`<span class="chip">#${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions">${api.gameFolders?`<button class="btn" data-action="game-folders" data-id="${g.id}">${I('folder')} Папки</button><button class="btn" data-action="game-backups" data-id="${g.id}">Копии</button>${api.screenshots?`<button class="btn" data-action="game-screenshots" data-id="${esc(g.id)}">Скриншоты</button>`:''}`:''}<button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe&&!g.steamAppId?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
  $('[name="collection"]').onchange=e=>{state.collection=e.target.value;run(render);};
  $('[name="library-progress"]').onchange=e=>{state.libraryProgress=e.target.value;run(render);};
 }
@@ -222,6 +239,11 @@ function launchDialog(g){
  if(g.steamAppId||!g.profiles.length)return launch(g.id,-1);
  showDialog('Запуск игры',`<p class="muted">${esc(g.title)}</p><form id="launch-form"><label class="field"><span>Профиль</span>${pick('profile',[['-1','Без аргументов'],...g.profiles.map((p,i)=>[String(i),p.name])],'-1','Профиль запуска')}</label><div class="dialog-actions"><button class="btn primary">${I('play')} Запустить</button></div></form>`);
  $('#launch-form').onsubmit=e=>{e.preventDefault();const p=Number(new FormData(e.currentTarget).get('profile'));run(async()=>{await launch(g.id,p);dialog.close();});};
+}
+function continueGame(g){
+ if(g.steamAppId||g.lastProfile===null)return launch(g.id,-1);
+ const chosen=g.profiles.findIndex(p=>JSON.stringify(p)===g.lastProfile);
+ return chosen>=0?launch(g.id,chosen):launchDialog(g);
 }
 async function launch(id,p){await api.launchGame(id,p);await refreshLibrary();toast('Игра запущена.');}
 function downloads(n){
@@ -346,7 +368,7 @@ async function loadSourceGames(n){
  shownSourceGames=result.games;
  const last=Math.max(1,Math.ceil(result.total/result.pageSize));
  const pager=last>1?`<form class="source-jump" aria-label="Переход к странице"><label>Страница <input type="number" name="page" min="1" max="${last}" value="${result.page}" required></label><button class="btn" type="submit">Перейти</button></form>`:'';
- let html=result.games.length?`<div class="source-results-overview"><p>Доступно записей: ${result.total.toLocaleString('ru')}</p>${pager}</div><div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
+ let html=result.games.length?`<div class="source-results-overview"><p>Доступно записей: ${result.total.toLocaleString('ru')}</p>${pager}</div><div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${g.cover&&/^(cyberpunk|elden|geometry|ghost|gta|last|onimusha|rdr|spider)$/.test(g.cover)?`<img class="library-cover" src="assets/${g.cover}.jpg" alt="">`:I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
  if(!result.games.length)html=state.srcTerm?details('search','Ничего не найдено','Попробуйте часть названия или оригинальное название. Проверьте, что нужный источник включён и его список загрузился.',btn('Показать все игры','browse-sources','layers')):details('layers','Пока нет загруженных записей','Статус загрузки каждого списка указан ниже.');
  const target=$('#source-games');
  if(target._markup!==html){target.innerHTML=html;target._markup=html;reveal(target,'.item-list > .list-item,.empty','rise');}
@@ -407,9 +429,14 @@ function setWallpaper(record){
  }
  state.wallpaper=record;
 }
+function currentTheme(){return getTheme(wallpaperTheme(cleanPersonal(state.settings.personal),state.section,state.settings.theme));}
 function applyTheme(){
- const theme=getTheme(state.settings.theme),root=document.documentElement;
- const custom=state.wallpaper?.enabled&&customURL;
+ const personal=cleanPersonal(state.settings.personal),theme=currentTheme(),root=document.documentElement;
+ const staged=Boolean(personal.sectionThemes[state.section]||personal.schedule.enabled);
+ const custom=!staged&&(slideURL||state.wallpaper?.enabled&&customURL);
+ for(const key of ['tv','compact','contrast','parallax'])root.dataset[key]=String(personal[key]);
+ root.style.setProperty('--app-zoom',personal.uiScale/100);
+ root.style.setProperty('--text-zoom',personal.textScale/100);
  root.dataset.theme=theme.id;
  root.dataset.themeGroup=custom?'custom':(theme.atmosphere||theme.group);
  root.style.setProperty('--hue',theme.hue);
@@ -418,7 +445,7 @@ function applyTheme(){
  root.classList.toggle('motion-off',state.settings.motion);syncMotion();
  const wall=$('#theme-wall'),image=$('#theme-wall-image'),src=custom||theme.asset;
  wall.dataset.art=custom?'custom':(theme.art||'vector');
- wall.dataset.fit=custom?state.wallpaper.fit:'cover';
+ wall.dataset.fit=custom&&!slideURL?state.wallpaper.fit:'cover';
  wall.hidden=!src;
  if(src&&image.getAttribute('src')!==src)image.src=src;
  if(!src)image.removeAttribute('src');
@@ -439,8 +466,8 @@ function applyThemeCardStyle(parent){
  });
 }
 function themeGallery(){
- const active=getTheme(state.settings.theme),custom=state.wallpaper?.enabled&&customURL,cover=custom||active.asset||sceneThemes[0].asset;
- return `<header class="theme-showcase"><img src="${cover}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея фонов</h2><p>${visualThemes.length} фонов в ${collections.length} коллекциях — от аниме и кино до неона и космоса. Или загрузи своё изображение.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-custom">${I('plus')} Свой фон</button><button class="btn theme-classic-shortcut" data-action="theme-random">${I('shuffle')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="theme-editor">${I('sliders')} Редактор темы</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">${custom?'Свой фон включён':`Активна: ${esc(active.name)}`}</span></div></div></header>
+ const active=currentTheme(),custom=!state.slides.length&&state.wallpaper?.enabled&&customURL,cover=slideURL||custom||active.asset||sceneThemes[0].asset;
+ return `<header class="theme-showcase"><img src="${cover}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея фонов</h2><p>${visualThemes.length} фонов в ${collections.length} коллекциях — от аниме и кино до неона и космоса. Или загрузи своё изображение.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-custom">${I('plus')} Свой фон</button><button class="btn theme-classic-shortcut" data-action="theme-random">${I('shuffle')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="theme-editor">${I('sliders')} Редактор темы</button><button class="btn theme-classic-shortcut" data-action="personal-settings">${I('settings')} Оформление и управление</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">${state.slides.length?'Слайд-шоу настроено':custom?'Свой фон включён':`Активна: ${esc(active.name)}`}</span></div></div></header>
  ${custom?`<div class="wallpaper-active"><span>${I('check')} Используется своё изображение</span><button class="btn" data-action="theme-custom-disable">Вернуть фон темы</button></div>`:''}
  <div class="theme-quick" role="group" aria-label="Популярные коллекции">${[['','Все фоны'],['favorites','Избранные темы'],...sceneCollections.map(c=>[c.id,c.name])].map(([id,name])=>`<button type="button" class="btn" data-theme-collection="${id}" aria-pressed="${id===state.themeGroup}">${esc(name)}</button>`).join('')}</div>
  <div class="theme-tools"><label class="theme-filter"><span>Коллекция</span><select id="theme-group" aria-label="Коллекция тем"><option value="">Все коллекции</option><option value="favorites" ${state.themeGroup==='favorites'?'selected':''}>Избранные темы</option>${collections.map(c=>`<option value="${c.id}" ${c.id===state.themeGroup?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label class="theme-filter theme-search"><span>Поиск темы</span><span class="input-icon">${I('search')}<input id="theme-search" type="search" placeholder="Например, северное сияние" maxlength="60" value="${esc(state.themeQuery)}"></span></label></div>
@@ -477,7 +504,7 @@ function previewTheme(id){
 function themeEditor(){
  const initial=cleanAppearance(state.settings.appearance);
  const range=(name,label,min,max)=>`<label class="field"><span>${label} · <output id="appearance-${name}"></output></span><input type="range" name="${name}" min="${min}" max="${max}" aria-label="${label}"></label>`;
- showDialog('Редактор темы',`<form id="appearance-form"><div class="appearance-demo" aria-hidden="true"><span class="theme-atmosphere"></span><div class="appearance-demo-card"><strong>ByAzen</strong><span>Панель библиотеки</span><span class="appearance-demo-pill">Акцент</span></div></div><div class="appearance-fields"><label class="field"><span>Цвет акцента</span><input type="color" name="accent"></label><label class="field"><span>Шрифт интерфейса</span>${pick('font',[['interface','Inter'],['system','Системный'],['rounded','Trebuchet'],['serif','С засечками']],initial.font,'Шрифт интерфейса')}</label>${range('opacity','Непрозрачность панелей',65,100)}${range('radius','Скругление',0,32)}${range('effects','Интенсивность фона',0,100)}</div><label class="toggle"><input type="checkbox" name="enabled"> Применять мои цвета, панели и шрифт</label><p class="muted small">Интенсивность действует отдельно: 0 отключает атмосферный слой, но не убирает фон. Системное уменьшение движения имеет приоритет.</p><div class="dialog-actions appearance-actions"><button type="button" class="btn" id="appearance-reset">Сбросить</button><div class="row">${btn('Отмена','close')}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></div></form>`,{eyebrow:'СВОЁ ОФОРМЛЕНИЕ'});
+ showDialog('Редактор темы',`<form id="appearance-form"><div class="appearance-demo" aria-hidden="true"><span class="theme-atmosphere"></span><div class="appearance-demo-card"><strong>ByAzen</strong><span>Панель библиотеки</span><span class="appearance-demo-pill">Акцент</span></div></div><div class="appearance-fields"><label class="field"><span>Цвет акцента</span><input type="color" name="accent"></label><label class="field"><span>Шрифт интерфейса</span>${pick('font',[['interface','Inter'],['system','Системный'],['rounded','Trebuchet'],['serif','С засечками']],initial.font,'Шрифт интерфейса')}</label>${range('opacity','Непрозрачность панелей',65,100)}${range('radius','Скругление',0,32)}${range('effects','Интенсивность фона',0,100)}</div><label class="toggle"><input type="checkbox" name="enabled"> Применять мои цвета, панели и шрифт</label><p class="muted small">Интенсивность действует отдельно: 0 отключает атмосферный слой, но не убирает фон. Системное уменьшение движения имеет приоритет.</p><div class="dialog-actions appearance-actions"><div class="row"><button type="button" class="btn" id="appearance-reset">Сбросить</button><button type="button" class="btn" id="accent-from-image">Цвет из фона</button></div><div class="row">${btn('Отмена','close')}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></div></form>`,{eyebrow:'СВОЁ ОФОРМЛЕНИЕ'});
  const form=$('#appearance-form'),demo=$('.appearance-demo',form),fields=form.elements;
  function fromFields(){return cleanAppearance({enabled:fields.enabled.checked,accent:fields.accent.value,font:fields.font.value,opacity:Number(fields.opacity.value),radius:Number(fields.radius.value),effects:Number(fields.effects.value)});}
  function preview(){const draft=fromFields();applyAppearance(demo,{...draft,enabled:true});for(const [name,unit] of [['opacity','%'],['radius',' px'],['effects','%']])$(`#appearance-${name}`,form).textContent=draft[name]+unit;}
@@ -485,6 +512,13 @@ function themeEditor(){
  fill(initial);
  form.oninput=event=>{if(['accent','font','opacity','radius'].includes(event.target.name))fields.enabled.checked=true;preview();};
  $('#appearance-reset',form).onclick=()=>fill(cleanAppearance(null));
+ $('#accent-from-image',form).onclick=()=>run(async()=>{
+  const visible=$('#theme-wall-image');
+  if($('#theme-wall').hidden||!visible.getAttribute('src'))throw Error('У текущей темы нет изображения. Сначала выберите фон.');
+  const color=await deriveAccent(visible);
+  if(!form.isConnected)return;
+  fields.accent.value=color;fields.enabled.checked=true;preview();
+ });
  form.onsubmit=e=>{e.preventDefault();const b=$('button[type=submit]',form);b.disabled=true;run(async()=>{
   try{state.settings=await api.saveSettings({...state.settings,appearance:fromFields()});applyTheme();if(form.isConnected&&dialog.open)dialog.close();toast('Оформление сохранено.');}
   finally{b.disabled=false;}
@@ -534,11 +568,61 @@ function customWallpaperDialog(){
  if(clear)clear.onclick=()=>update(null,'Свой фон удалён.');
 }
 dialog.addEventListener('close',()=>{if(!dialog.open)disposeWallpaperPreview?.();});
+function selectSlide(index){
+ if(slideURL)URL.revokeObjectURL(slideURL);
+ slideIndex=state.slides.length?index%state.slides.length:0;
+ slideURL=state.slides.length?URL.createObjectURL(state.slides[slideIndex]):undefined;slideStarted=Date.now();
+}
+function showSlides(){
+ showDialog('Слайд-шоу из папки',`<form id="slideshow-form"><p class="muted">До 12 JPG, PNG или WebP из выбранной папки. Копии хранятся в профиле ByAzen. Автосмена работает при открытом окне и разрешённой анимации; фоны разделов и расписание имеют приоритет.</p><div class="row"><input type="file" id="slide-folder" webkitdirectory multiple hidden><button class="btn" type="button" id="slide-choose">${I('folder')} Выбрать папку</button></div><p class="muted small" role="status"></p><label class="field"><span>Смена кадров, секунд</span><input name="seconds" min="5" max="180" required type="number" value="${cleanPersonal(state.settings.personal).slideSeconds}"></label><div class="dialog-actions"><button type="button" class="btn" id="slide-off" ${state.slides.length?'':'disabled'}>Отключить слайд-шоу</button>${btn('Отмена','close')}<button type="submit" class="btn primary">Применить</button></div></form>`);
+ const form=$('#slideshow-form'),input=$('#slide-folder',form),status=$('[role=status]',form),apply=$('[type=submit]',form);let slides=state.slides;
+ status.textContent=`Кадров: ${slides.length}`;apply.disabled=!slides.length;
+ $('#slide-choose',form).onclick=()=>input.click();
+ input.onchange=()=>run(async()=>{
+  const list=input.files,selected=[];
+  for(let i=0;i<Math.min(1500,list.length);i++){const file=list[i];if(/\.jpe?g$|\.png$|\.webp$/i.test(file.name))selected.push(file);}
+  selected.sort((a,b)=>a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+  const next=[];apply.disabled=true;status.textContent='Подготавливаем кадры…';
+  for(const file of selected.slice(0,18)){try{next.push((await prepareWallpaper(file)).blob);}catch{}if(next.length>=12||!form.isConnected)break;}
+  if(!form.isConnected)return;
+  if(next.length)slides=next;status.textContent=next.length?`Готово кадров: ${next.length}`:'Нет подходящих изображений; прежние кадры сохранены.';apply.disabled=!slides.length;
+ });
+ async function save(rows){await slideshowIO.save(rows);state.slides=rows;selectSlide(0);await applySaved({personal:{...cleanPersonal(state.settings.personal),slideSeconds:Number(form.elements.seconds.value)}});if(form.isConnected&&dialog.open)dialog.close();if($('#themes'))drawThemes();toast(rows.length?'Слайд-шоу включено.':'Слайд-шоу выключено.');}
+ $('#slide-off',form).onclick=()=>run(()=>save([]));
+ form.onsubmit=e=>{e.preventDefault();if(!slides.length)return;apply.disabled=true;run(async()=>{try{await save(slides);}finally{apply.disabled=false;}});};
+}
+async function exportFile(kind,payload){
+ if(api.saveExport){if(await api.saveExport(kind,payload))toast('Файл сохранён.');return;}
+ const cfg={theme:['json','application/json'],csv:['csv','text/csv'],year:['png','image/png']}[kind];
+ const blob=new Blob([kind==='year'?Uint8Array.from(atob(payload),c=>c.charCodeAt(0)):payload],{type:cfg[1]});
+ const link=document.createElement('a'),url=URL.createObjectURL(blob);link.href=url;link.download=`ByAzen-${kind}.${cfg[0]}`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function importThemeDialog(){
+ showDialog('Импорт оформления',`<form id="import-theme"><p class="muted">Откройте пакет ByAzen (.json). В нём используются только разрешённые значения и JPEG, код не выполняется. Планировщик и слайд-шоу имеют приоритет над импортированным фоном.</p><input name="file" type="file" accept=".json,application/json" required><p class="muted small" role="status"></p><div class="dialog-actions">${btn('Отмена','close')}<button type="button" class="btn primary" id="theme-package-apply" disabled>Применить оформление</button></div></form>`);
+ const form=$('#import-theme'),status=$('[role=status]',form),apply=$('#theme-package-apply',form);let pending,ticket=0;
+ form.elements.file.onchange=async()=>{const file=form.elements.file.files[0],serial=++ticket;pending=null;apply.disabled=true;if(!file)return;status.textContent='Проверяем пакет…';
+  try{const result=await unpackTheme(file);if(serial!==ticket||!form.isConnected)return;pending=result;status.textContent=`${getTheme(result.theme).name} · ${result.wallpaper?'с изображением (заменит свой фон)':'без изображения (свой фон будет отключён)'}`;apply.disabled=false;}
+  catch(e){if(serial===ticket&&form.isConnected)status.textContent=e.message;}
+ };
+ apply.onclick=()=>run(async()=>{
+  if(!pending)return;apply.disabled=true;
+  try{const record=pending.wallpaper||(state.wallpaper?{...state.wallpaper,enabled:false}:null);await saveWallpaper(record);setWallpaper(record);await applySaved({theme:pending.theme,appearance:pending.appearance});if(form.isConnected&&dialog.open)dialog.close();if($('#themes'))drawThemes();toast('Оформление импортировано.');}
+  finally{apply.disabled=false;}
+ });
+}
+const personalTools=setupPersonal({dialog,showDialog,esc,pick,icons:I,sections,get:()=>state.settings,save:applySaved,notify:toast,showSlides,exportTheme:()=>run(async()=>exportFile('theme',await packTheme(state.settings,state.wallpaper))),importTheme:importThemeDialog});
+async function openNotifications(){
+ const saved=api.notifications?await api.notifications():[];
+ const rows=[...saved,...sessionNotices].sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,80);
+ $('#notice-shortcut').dataset.new='false';
+ showDialog('Уведомления',`<section id="notice-history"><ul class="journal-list">${rows.map(n=>`<li><div><strong>${esc(n.title)}</strong><p class="muted small">${esc(n.detail)} · ${esc(new Date(n.at).toLocaleString('ru'))}</p></div>${['sources','downloads'].includes(n.target)?`<button type="button" class="btn" data-go="${n.target}">Открыть</button>`:''}</li>`).join('')||'<li class="muted">Новых уведомлений нет.</li>'}</ul><div class="dialog-actions">${rows.length?'<button type="button" class="btn" id="clear-notices">Очистить историю</button>':''}${btn('Закрыть','close')}</div></section>`);
+ const clear=$('#clear-notices');if(clear)clear.onclick=()=>run(async()=>{await api.clearNotifications?.();sessionNotices=[];localStorage.removeItem('byazen-ui-alerts');await openNotifications();});
+}
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
- <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button>${btn('Что нового','release-notes','spark')}</div>
+ <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button>${btn('Оформление и управление','personal-settings','sliders')}${btn('Что нового','release-notes','spark')}</div>
  <section class="theme-pane" id="themes" aria-label="Галерея тем" tabindex="-1"></section>
- <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label><label class="field"><span>Открывать при запуске</span>${pick('startSection',[['home','Главная'],['library','Библиотека'],['catalog','Каталог'],['downloads','Загрузки'],['sources','Источники'],['rankings','Рейтинги']],state.settings.startSection||'home','Открывать при запуске')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
+ <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label><label class="field"><span>Открывать при запуске</span>${pick('startSection',[['home','Главная'],['library','Библиотека'],['catalog','Каталог'],['downloads','Загрузки'],['sources','Источники'],['rankings','Рейтинги'],['journal','Журнал']],state.settings.startSection||'home','Открывать при запуске')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
  drawThemes();
  $('#settings-form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{state.settings=await api.saveSettings({...state.settings,name:f.get('name').trim()||'Игрок',region:f.get('region'),startSection:f.get('startSection'),motion:f.has('motion')});state.filter.cc=state.settings.region;applyTheme();sidebar();toast('Настройки сохранены.');});};
 }
@@ -570,6 +654,15 @@ async function dispatch(b){
   case 'source-page':return switchSourcePage(Number(d.page));
   case 'library-tab':state.libraryFilter=d.tab;return render();
   case 'new-game':return editGame();
+  case 'library-batch':return libraryWave.batch();
+  case 'library-move':return libraryWave.move();
+  case 'game-screenshots':if(g)return libraryWave.screenshots(g);break;
+  case 'continue-game':if(g)return continueGame(g);break;
+  case 'journal-session':return journalView.entry('session');
+  case 'journal-moment':return journalView.entry('moment');
+  case 'journal-csv':return journalView.csv();
+  case 'personal-settings':return personalTools.open();
+  case 'notifications':return openNotifications();
   case 'library-scan-local':case 'library-scan-steam':{const n=renderId;b.disabled=true;try{return await gamesTools.openScan(a==='library-scan-steam'?'steam':'local',()=>current(n));}finally{b.disabled=false;}}
   case 'game-folders':if(g)return gamesTools.folders(g);break;
   case 'game-backups':if(g)return gamesTools.backups(g);break;
@@ -619,7 +712,7 @@ async function dispatch(b){
   case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
   case 'source-op':if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
-  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.23',`<ul class="release-list"><li><strong>Библиотека:</strong> поиск EXE и импорт установленных игр Steam.</li><li><strong>Сохранения:</strong> папки игры, копирование перед запуском и восстановление с предпросмотром.</li><li><strong>Оформление:</strong> живой редактор палитры, скруглений и шрифта; интенсивность эффектов.</li></ul><h3>В версии 1.0.22</h3><ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
+  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.24',`<ul class="release-list"><li>Слайд-шоу, расписание и фоны по разделам, свой звук, заставки и переносимые пакеты оформления.</li><li>Журнал: время, планы, события и статистика с экспортом.</li><li>Управление геймпадом, размер интерфейса, системный трей и история уведомлений.</li></ul><h3>В версии 1.0.23</h3><ul class="release-list"><li><strong>Библиотека:</strong> поиск EXE и импорт установленных игр Steam.</li><li><strong>Сохранения:</strong> папки игры, копирование перед запуском и восстановление с предпросмотром.</li><li><strong>Оформление:</strong> живой редактор палитры, скруглений и шрифта; интенсивность эффектов.</li></ul><h3>В версии 1.0.22</h3><ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
   case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
   case 'theme-editor':return themeEditor();
   case 'theme-preview':return previewTheme(d.themeId);
@@ -663,10 +756,35 @@ async function dispatch(b){
   }
  }
 }
-document.addEventListener('click',e=>{const b=e.target.closest('button[data-action],button[data-go]');if(b&&!b.disabled)run(()=>dispatch(b));});
+document.addEventListener('click',e=>{const click=e.target.closest('button');const p=state.settings.personal;if(click&&!click.disabled&&p?.sound)void themeTone(p.sound,p.volume);const b=click?.matches('[data-action],[data-go]')&&click;if(b&&!b.disabled)run(()=>dispatch(b));});
 $('#profile').onclick=()=>go('settings');
 $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('sliders');
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
+const gamepad=setupGamepad({dialog,get:()=>state.settings,go});gamepad.start();
+document.addEventListener('keydown',e=>{
+ if(dialog.open||e.repeat)return;
+ const key=keyFromEvent(e),keys=cleanPersonal(state.settings.personal).keys,action=Object.keys(keys).find(id=>key&&keys[id]===key);
+ if(!action)return;
+ if(e.target.matches?.('input,select,textarea,[contenteditable]')&&action!=='search')return;
+ e.preventDefault();if(action==='search')$('#global-input').focus();else go(action);
+});
+$('#notice-shortcut').innerHTML=I('notice');
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-run(async()=>{try{state.settings=await api.settings();setWallpaper(await readWallpaper().catch(()=>null));applyTheme();state.library=await api.library();}finally{const start=state.settings.startSection;if(start&&start!=='home'&&Object.hasOwn(sections,start))go(start);else{sidebar();await render();}}});
+api.onNoticeChanged?.(()=>{const button=$('#notice-shortcut');button.dataset.new='true';const p=state.settings.personal;if(p?.sound)void themeTone(p.sound,p.volume,'notice');});
+api.onGoSection?.(section=>go(section));
+let pointer=0,pointerX=0,pointerY=0;
+document.addEventListener('pointermove',e=>{
+ if(!state.settings.personal?.parallax||!motionAllowed()||e.pointerType!=='mouse')return;
+ pointerX=(e.clientX/Math.max(1,innerWidth)-.5)*22;pointerY=(e.clientY/Math.max(1,innerHeight)-.5)*22;
+ if(!pointer)pointer=requestAnimationFrame(()=>{pointer=0;const wall=$('#theme-wall');wall.style.setProperty('--wall-x',`${pointerX}px`);wall.style.setProperty('--wall-y',`${pointerY}px`);});
+},{passive:true});
+setInterval(()=>{if(document.hidden)return;
+ if(state.slides.length>1&&motionAllowed()&&Date.now()-slideStarted>=(state.settings.personal?.slideSeconds||25)*1000)selectSlide(slideIndex+1);
+ if(state.settings.personal?.schedule?.enabled||state.slides.length)applyTheme();
+},1000);
+run(async()=>{try{
+ state.settings=await api.settings();
+ const [wallpaper,slides]=await Promise.all([readWallpaper().catch(()=>null),slideshowIO.read().catch(()=>[])]);
+ setWallpaper(wallpaper);state.slides=slides;selectSlide(0);applyTheme();showIntro(cleanPersonal(state.settings.personal).intro);
+ state.library=await api.library();
+ }finally{const start=state.settings.startSection;if(start&&start!=='home'&&Object.hasOwn(sections,start))go(start);else{sidebar();await render();}}});

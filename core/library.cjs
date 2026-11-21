@@ -26,7 +26,7 @@ async function launchGame(exe, args) {
   return new Promise((resolve,reject) => {
     const child = spawn(spec.exe,spec.args,spec.options);
     child.once('error',reject);
-    child.once('spawn', () => {child.unref(); resolve();});
+    child.once('spawn', () => {child.unref(); resolve(child);});
   });
 }
 module.exports = {cleanGame, prepareLaunch, launchGame};

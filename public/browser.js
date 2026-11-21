@@ -1,3 +1,4 @@
+import {localDay} from './journal.js';
 import {searchSources,availability,sourceMatches} from './source-search.js';
 const read = () => {try {return JSON.parse(localStorage.getItem('byazen-preview-v1')) || {};} catch {return {};}};
 const store = read();
@@ -34,7 +35,7 @@ export const browser = {
  openSteamCharts:async()=>ext('https://store.steampowered.com/charts/topselling'),
  openProjectFeedback:async()=>ext('https://github.com/gggvkvh405-rgb/1/issues/new'),
  library:async()=>store.library,
- saveGame:async(id,g)=>{if(id) Object.assign(store.library.find(g=>g.id===id),g); else store.library.push({...g,id:crypto.randomUUID(),exe:'',lastPlayed:''}); save();},
+ saveGame:async(id,g)=>{const old=store.library.find(item=>item.id===id),finishedAt=g.progress==='finished'?(old?.progress==='finished'?old.finishedAt:localDay()):'';if(old)Object.assign(old,g,{finishedAt});else store.library.push({...g,id:crypto.randomUUID(),exe:'',lastPlayed:'',finishedAt}); save();},
  favorite:async id=>{const g=store.library.find(g=>g.id===id); g.favorite=!g.favorite; save();},
  removeGame:async id=>{store.library=store.library.filter(g=>g.id!==id);save();},
  chooseExe:desktopOnly, launchGame:desktopOnly, downloads:async()=>[], addDownload:desktopOnly, downloadAction:desktopOnly,

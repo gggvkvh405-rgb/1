@@ -8,6 +8,7 @@ on:
       - 'core/**'
       - 'public/**'
       - 'test/**'
+      - 'scripts/windows-smoke.cjs'
       - 'package*.json'
       - '.github/workflows/windows.yml'
 
@@ -32,7 +33,9 @@ jobs:
         run: |
           $exe = Get-ChildItem release/ByAzen-*-win-x64-portable.exe | Select-Object -First 1
           if (!$exe) { throw 'Portable package not found' }
-          $proc = Start-Process $exe.FullName -PassThru
+          node scripts/windows-smoke.cjs --seed
+          if ($LASTEXITCODE -ne 0) { throw "Portable test setup failed" }
+          $proc = Start-Process $exe.FullName -ArgumentList "--remote-debugging-port=9225", "--remote-debugging-address=127.0.0.1" -PassThru
           try {
             $started = $false
             for ($i = 0; $i -lt 30; $i++) {
@@ -44,6 +47,8 @@ jobs:
               if ($proc.HasExited) { break }
             }
             if (!$started) { throw 'ByAzen window did not appear' }
+            node scripts/windows-smoke.cjs
+            if ($LASTEXITCODE -ne 0) { throw 'Portable renderer smoke test failed' }
           } finally {
             Get-Process ByAzen -ErrorAction SilentlyContinue | Stop-Process -Force
             if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force }

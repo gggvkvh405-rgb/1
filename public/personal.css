@@ -1,0 +1,56 @@
+:root{--app-zoom:1;--text-zoom:1}
+body{zoom:var(--app-zoom)}
+:root{--ui-small:calc(13px * var(--text-zoom));--ui-control:calc(15px * var(--text-zoom));--ui-body:calc(16px * var(--text-zoom))}
+#nav .nav-link,.side-game{font-size:calc(var(--side-text,15px) * var(--text-zoom))}
+:root[data-tv=true]{--ui-small:calc(15px * var(--text-zoom));--ui-control:calc(18px * var(--text-zoom));--ui-body:calc(19px * var(--text-zoom));--side-text:17px;--side-row:53px}
+[data-tv=true] .btn{min-height:54px;padding-inline:18px}
+[data-tv=true] .game-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,225px),1fr))}
+[data-tv=true] :is(button,a,input,select,textarea):focus{outline:3px solid var(--accent);outline-offset:3px}
+[data-compact=true]:not([data-tv=true]) .list-item{padding-block:7px;gap:9px}
+[data-compact=true]:not([data-tv=true]) .list-item :is(.btn,.icon-btn){min-height:32px;height:auto;padding-block:4px}
+[data-compact=true]:not([data-tv=true]) .list-item .list-icon{width:36px;height:36px}
+:root[data-contrast=true]{color-scheme:dark;--bg:#000;--side:#080808;--bar:#090909;--panel:#101010;--panel2:#171717;--hover:#272727;--line:#a9a9a9;--subtle:#898989;--text:#fff;--muted:#eee;--accent:#fff195;--accent-fill:#fff195;--on-accent:#000;--accent-bg:#272415;--ok:#afffdc;--danger:#ffb5c2}
+[data-contrast=true] .theme-wall{visibility:hidden}
+[data-contrast=true] :is(.btn,input,select,textarea,.list-item,.pane){border-color:var(--line)}
+[data-parallax=true]:not(.motion-off) .theme-wall>img{transform:translate(var(--wall-x,0px),var(--wall-y,0px)) scale(1.065);transition:transform 120ms ease-out}
+.personal-tabs,.personal-tools,.personal-toggles{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.personal-tabs .btn[aria-pressed=true]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.personal-form-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-block:12px}
+.personal-form-grid select{width:100%;min-width:0}
+.personal-order{display:grid;gap:6px}
+.personal-order>div{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:7px}
+.personal-toggles>.toggle{flex:1 1 220px}
+.season-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:14px 0}
+.season-grid .season-card{display:grid;align-content:start;padding:0 0 9px;white-space:normal;overflow:hidden;border-radius:var(--radius-md);text-align:center}
+.season-card img{width:100%;aspect-ratio:2;object-fit:cover;display:block}
+.season-card span{padding-inline:4px}
+#notice-shortcut{position:fixed;right:20px;bottom:64px;z-index:6;background:var(--panel2);box-shadow:0 5px 18px #0004}
+#notice-shortcut[data-new=true]::after{content:'';position:absolute;width:8px;height:8px;border-radius:50%;background:var(--accent);top:5px;right:5px}
+.journal-stats,.journal-more{display:grid;gap:14px;margin-bottom:14px}
+.journal-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+.journal-more{grid-template-columns:repeat(2,minmax(0,1fr))}
+.journal-stats article>strong{font-size:clamp(22px,3vw,34px)}
+.journal-stats article>.btn,.journal-stats form,.journal-more form{margin-top:10px}
+.journal-stats input,.journal-more input[type=number]{max-width:110px}
+.journal-list{padding:0;list-style:none;max-height:370px;overflow:auto}
+.journal-list li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.journal-list .btn{white-space:normal}
+.continue-game{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:20px clamp(16px,2vw,32px)}
+.library-cover{width:100%;height:100%;object-fit:cover;border-radius:inherit}
+#game-screenshots figure{margin:0 0 14px}
+#game-screenshots img{display:block;margin:auto;max-width:100%;max-height:56vh;object-fit:contain}
+#game-screenshots img[hidden]{display:none}
+.startup-intro{position:fixed;inset:0;display:grid;place-items:center;z-index:50;background:#101017;pointer-events:none;animation:intro-fade .9s both}
+.startup-intro img{width:min(130px,24vw)}
+.startup-intro[data-intro=scan] img{animation:intro-scan .8s both}
+@keyframes intro-fade{0%,39%{opacity:1}100%{opacity:0}}
+@keyframes intro-scan{0%{opacity:0;transform:scale(.8)}55%{opacity:1;filter:drop-shadow(0 0 25px #bca8ff);transform:scale(1.1)}100%{opacity:.7;transform:scale(1)}}
+.motion-off .startup-intro{display:none}
+@media(prefers-reduced-motion:reduce){[data-parallax=true] .theme-wall>img{transform:none!important;transition:none!important}.startup-intro{display:none}}
+@media(max-width:950px){.journal-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.journal-stats,.journal-more,.personal-form-grid{grid-template-columns:minmax(0,1fr)}.season-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.continue-game{flex-wrap:wrap}}
+@media(max-width:720px){
+ .settings-tabs :is(.btn,button),.theme-showcase-actions .btn,.settings-pane .btn,.appearance-actions .btn,.head-actions .btn{max-width:100%;white-space:normal;text-align:center}
+ .theme-showcase-copy{min-width:0;max-width:100%}
+ .journal-list li{flex-wrap:wrap}
+}
