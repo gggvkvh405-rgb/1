@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const {randomUUID} = require('node:crypto');
 const {pathToFileURL} = require('node:url');
 const {parseSource, MAX_JSON, sourceLink} = require('../core/sources.cjs');
-const {searchSteam,officialProduct} = require('../core/steam.cjs');
+const {searchSteam} = require('../core/steam.cjs');
 const {webURL,getJSON} = require('../core/net.cjs');
 const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
@@ -36,7 +36,6 @@ async function bootstrap() {
     settings: () => data.settings,
     saveSettings: (x) => { data.settings = updateSettings(x); persist(); return data.settings; },
     steam: searchSteam,
-    openSteam: async raw => { const safe = officialProduct(raw); if (!safe) throw Error('Недопустимая страница Steam.'); await shell.openExternal(safe); },
     openSteamCharts: () => shell.openExternal('https://store.steampowered.com/charts/topselling'),
     openProjectFeedback: () => shell.openExternal('https://github.com/gggvkvh405-rgb/1/issues/new'),
     sources: () => sourcesSummary(data.sources).map(s=>({...s,loading:presetSync.loading(s.id)})),
@@ -85,9 +84,8 @@ async function bootstrap() {
       if (!src.enabled || !Number.isInteger(index) || !Number.isInteger(linkIndex)) throw Error('Ссылка недоступна.');
       const url = sourceLink(src.games[index]?.links[linkIndex]);
       if (url !== expected) throw Error('Источник изменился. Откройте ссылку повторно.');
-      if (action === 'browser' && !url.startsWith('magnet:')) await shell.openExternal(webURL(url).href);
-      else if (action === 'download') return addDownload(url,src.games[index].title);
-      else throw Error('Неподдерживаемое действие.');
+      if (action !== 'download') throw Error('Неподдерживаемое действие.');
+      return addDownload(url,src.games[index].title);
     },
     library: () => data.library,
     chooseExe: async () => {

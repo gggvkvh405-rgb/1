@@ -11,14 +11,14 @@
  html:not(.motion-off) :is(.stage,.sidebar,dialog,.pane,.list-item,.btn,.game-card,.catalog-row,.theme-card,.quick-button,.nav-link,.tab,input,select,textarea) {
   transition:var(--surface-motion), scale var(--motion-fast) var(--motion-ease), translate var(--motion-mid) var(--motion-ease);
  }
- html:not(.motion-off) :is(.avatar,.nav-link svg,.quick-button svg,.side-game svg,.tab-glyph,.catalog-row-art img,.card-art img,.card-copy,.theme-preview i,.list-icon,.empty-icon,.game-source-entry svg:last-child,.page-head .eyebrow i) {
+ html:not(.motion-off) :is(.avatar,.nav-link svg,.quick-button svg,.side-game svg,.tab-glyph,.catalog-row-art img,.card-art img,.card-copy,.theme-preview i,.list-icon,.empty-icon,.page-head .eyebrow i) {
   transition: transform var(--motion-mid) var(--motion-ease), color var(--motion-fast), opacity var(--motion-fast), scale var(--motion-mid) var(--motion-ease);
  }
  html:not(.motion-off) :is(.btn,.quick-button,.nav-link,.tab,.theme-card,.game-card,.catalog-row):active:not(:disabled) { scale:.978; }
  html:not(.motion-off) :is(input:not([type=range]):not([type=checkbox]),textarea,select):focus-visible { box-shadow:0 0 0 3px var(--accent-bg); }
  html:not(.motion-off) .toggle input:checked { animation:check-in 260ms var(--motion-ease); }
- html:not(.motion-off) :is(.catalog-facet,.game-source-group) summary svg { transition:transform var(--motion-mid) var(--motion-ease); }
- html:not(.motion-off) :is(.catalog-facet[open] > .catalog-facet-body,.game-source-group[open] > .game-source-entries) { animation:detail-in 250ms var(--motion-ease); }
+ html:not(.motion-off) .catalog-facet summary svg { transition:transform var(--motion-mid) var(--motion-ease); }
+ html:not(.motion-off) .catalog-facet[open] > .catalog-facet-body { animation:detail-in 250ms var(--motion-ease); }
  html:not(.motion-off) .catalog-results[aria-busy=true] .empty-icon { animation:loading-breathe 1.25s ease-in-out 4; }
  html:not(.motion-off) .motion-meter.is-indeterminate > span { animation:meter-slide 1.45s ease-in-out 3; }
  html:not(.motion-off) .dl-item[data-state=running] .list-icon svg { animation:loading-breathe 1.3s ease-in-out 3; }
@@ -53,7 +53,6 @@
  html:not(.motion-off) .theme-card:hover .theme-preview i:nth-child(2) { transition-delay:38ms; transform:translateY(-7px); }
  html:not(.motion-off) .theme-card:hover .theme-preview i:nth-child(3) { transition-delay:76ms; }
  html:not(.motion-off) .list-item:hover .list-icon { transform:rotate(-5deg) scale(1.06); }
- html:not(.motion-off) .game-source-entry:hover svg:last-child { transform:translateX(3px); }
 }
 @keyframes check-in { 0%{scale:.8} 56%{scale:1.12} 100%{scale:1} }
 @keyframes detail-in { from{opacity:.45;translate:0 -4px} to{opacity:1;translate:0 0} }

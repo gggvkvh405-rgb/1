@@ -30,7 +30,7 @@ const key = s => s.replace(/[™®©]/gu,'').normalize('NFKC').toLowerCase().rep
 const ext = url => { window.open(url,'_blank','noopener,noreferrer'); };
 export const browser = {
  settings:async()=>store.settings, saveSettings:async x=>{store.settings=x; save(); return x;},
- steam:async x=>api('steam',x), openSteam:async url=>ext(url),
+ steam:async x=>api('steam',x),
  openSteamCharts:async()=>ext('https://store.steampowered.com/charts/topselling'),
  openProjectFeedback:async()=>ext('https://github.com/gggvkvh405-rgb/1/issues/new'),
  library:async()=>store.library,
@@ -59,5 +59,5 @@ export const browser = {
   if(!g||g.title!==title||!g.links.length)throw Error('Источник изменился или отключён. Откройте игру повторно.');
   return {...g,source:s.name,id:s.id,index};
  },
- openSource:async(id,index,link,action,expected)=>{const s=store.sources.find(s=>s.enabled&&s.id===id);const u=s?.games[index]?.links[link];if(u!==expected)throw Error('Источник изменился. Откройте ссылку повторно.');if(action==='download')return desktopOnly();if(u?.startsWith('magnet:?')||/^https?:\/\//.test(u))ext(u);else throw Error('Недопустимая ссылка.');}
+ openSource:async(id,index,link,action,expected)=>{const s=store.sources.find(s=>s.enabled&&s.id===id);const u=s?.games[index]?.links[link];if(u!==expected)throw Error('Источник изменился. Откройте ссылку повторно.');if(action!=='download'||!u)throw Error('Недопустимое действие.');return desktopOnly();}
 };
