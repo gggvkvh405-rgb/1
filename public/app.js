@@ -41,7 +41,7 @@ const pick = (name, items, selected, label) => `<select name="${esc(name)}" aria
 const current = (n)=>n===renderId;
 function toast(text,error=false){rememberToast(text,error);if(!appearanceRuntime.safe&&state.settings.personal?.sound)void themeTone(state.settings.personal.sound,state.settings.personal.volume,'notice');const x=document.createElement('div');x.className='toast'+(error?' bad':'');x.innerHTML=`${I(error?'alert':'check')}<span>${esc(text)}</span>`;$('#toasts').append(x);setTimeout(()=>{if(!motionAllowed())return x.remove();x.classList.add('is-leaving');setTimeout(()=>x.remove(),200);},4100);}
 function run(fn) {return Promise.resolve().then(fn).catch(e=>toast(e.message,true));}
-function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing){disposeWallpaperPreview?.();dialog.close();}dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
+function showDialog(title,body,{variant='',eyebrow=''}={}){const replacing=dialog.open;if(replacing){dialog.querySelector('video')?.pause();disposeWallpaperPreview?.();dialog.close();}dialog.dataset.variant=variant;dialogBody.innerHTML=`<div class="dialog-head"><div>${eyebrow?`<div class="dialog-kicker">${eyebrow}</div>`:''}<h2 id="dialog-title">${title}</h2></div><button type="button" class="icon-btn" data-action="close" aria-label="Закрыть">${I('close')}</button></div>${body}`;dialog.showModal();reveal(dialogBody,'.dialog-head, .dialog-head + p, .dialog-actions','slide',{step:35});}
 const date = s => s ? new Date(s).toLocaleDateString('ru') : '';
 function sidebar(){
  $('#nav').innerHTML=cleanPersonal(state.settings.personal).nav.map(id=>[id,sections[id]]).map(([id,[title,glyph]])=>`<button class="nav-link ${state.section===id?'active':''}" ${state.section===id?'aria-current="page"':''} data-go="${id}" title="${title}">${I(glyph)}<span>${title}</span></button>`).join('');
@@ -55,7 +55,7 @@ async function render(reason){const n=++renderId, section=state.section;content.
 function rangeButtons(result,prefix){
  const rawLast=Math.ceil(result.total/result.pageSize);
  const last=Math.max(1,prefix==='steam'?Math.min(500,rawLast):rawLast);
- return `<div class="pagination"><button class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page.toLocaleString('ru')} из ${last.toLocaleString('ru')}</span><button class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;
+ return `<div class="pagination"><button type="button" class="btn" data-action="${prefix}-page" data-page="${result.page-1}" ${result.page<=1?'disabled':''}>← Назад</button><span>Страница ${result.page.toLocaleString('ru')} из ${last.toLocaleString('ru')}</span><button type="button" class="btn" data-action="${prefix}-page" data-page="${result.page+1}" ${result.page>=last?'disabled':''}>Далее →</button></div>`;
 }
 
 const homeTabs=[['flame','Сейчас популярно'],['calendar','Лучшие игры недели'],['trophy','Игры с достижениями']];
@@ -803,6 +803,7 @@ async function dispatch(b){
   }
  }
 }
+dialog.addEventListener('close',()=>{if(!dialog.open)dialog.querySelector('video')?.pause();});
 document.addEventListener('click',e=>{const click=e.target.closest('button');const p=state.settings.personal;if(click&&!click.disabled&&!appearanceRuntime.safe&&p?.sound)void themeTone(p.sound,p.volume);const b=click?.matches('[data-action],[data-go]')&&click;if(b&&!b.disabled)run(()=>dispatch(b));});
 $('#profile').onclick=()=>go('settings');
 $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('sliders');

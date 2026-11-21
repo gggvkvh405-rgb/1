@@ -8,7 +8,7 @@ const stateFile=path.join(profile,'state.json');
 async function seed(){
   const exe=path.join(process.env.SystemRoot,'System32','PING.EXE');await fs.access(exe);
   await fs.mkdir(profile,{recursive:true});
-  await fs.writeFile(stateFile,JSON.stringify({settings:{startSection:'journal'},library:[{id:'fixture',title:'CI session',exe,collections:[],profiles:[{name:'Fixture',args:['-n','3','127.0.0.1']}]}]}));
+  await fs.writeFile(stateFile,JSON.stringify({settings:{startSection:'journal',theme:'scene-photo-snow'},library:[{id:'fixture',title:'CI session',exe,collections:[],profiles:[{name:'Fixture',args:['-n','3','127.0.0.1']}]}]}));
 }
 async function smoke(){
   let target;
@@ -32,10 +32,10 @@ async function smoke(){
       const api=window.byazen,settings=await api.settings();
       await api.saveSettings({...settings,personal:{...settings.personal,tray:true}});
       await api.saveSettings({...settings,personal:{...settings.personal,tray:false}});
-      const before=await api.appearanceRuntime();if(before.safe)throw Error('Unexpected initial safe mode');
+      const before=await api.appearanceRuntime();if(before.safe||document.documentElement.dataset.theme!=='scene-photo-snow')throw Error('Unexpected initial appearance');
       await api.safeAppearance(true);
       if(document.documentElement.dataset.safeAppearance!=='true')await wait(100);
-      if(document.documentElement.dataset.theme!=='dark')throw Error('Safe appearance did not use the classic theme');
+      if(document.documentElement.dataset.safeAppearance!=='true'||document.documentElement.dataset.theme!=='dark')throw Error('Safe appearance did not use the classic theme');
       await api.safeAppearance(false);
       await api.saveRequired('fixture',['byazen-ci-missing.dat']);
       const files=await api.checkRequired('fixture');
