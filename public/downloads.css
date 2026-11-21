@@ -1,0 +1,24 @@
+.download-overview { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 16px; }
+.download-overview > span { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-md); padding:8px 11px; font-size:var(--ui-control); }
+.download-overview svg { width:16px; color:var(--accent); }
+.download-overview strong { color:var(--text); }
+.download-tabs { margin:12px 0; }
+.dl-item { align-items:flex-start; }
+.dl-item .item-actions { max-width:min(45%,440px); justify-content:flex-end; }
+.dl-item .list-copy p.dl-error { color:var(--danger); white-space:normal; overflow-wrap:anywhere; }
+.dl-item .list-copy p.dl-discovery { white-space:normal; }
+.dl-live { display:flex; align-items:center; gap:12px; margin-top:4px; color:var(--accent); font-size:var(--ui-small); font-variant-numeric:tabular-nums; }
+.dl-live[hidden] { display:none; }
+.dl-chart { display:flex; align-items:flex-end; width:75px; height:16px; gap:2px; }
+.dl-chart i { flex:1; height:calc(var(--rate,.06) * 100%); min-height:1px; border-radius:2px; background:var(--accent-fill); }
+.download-option-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.download-option-fields.schedule-fields { grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:9px; }
+#download-settings > .toggle { margin-top:12px; }
+@media(max-width:760px) { .download-option-fields { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:625px) { .dl-item .item-actions { max-width:none; } }
+@media(max-width:420px) { .download-option-fields { grid-template-columns:1fr; gap:0; } }
+.game-notes { color:var(--muted); font-size:var(--ui-control); margin-top:8px; }
+.game-notes summary { cursor:pointer; color:var(--accent); }
+.list-copy .game-notes p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.release-list { display:grid; gap:8px; padding-inline-start:26px; }
+.theme-bookmark[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }

@@ -6,11 +6,12 @@ const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {request, webURL} = require('./net.cjs');
 const {torrentDownload,magnetV1}=require('./torrent.cjs');
+const {transferOptions,inDownloadWindow,ensureSpace,issue,downloadError,knownCode,cleanHash,verifyFile,throttle,TransferMeter}=require('./transfer-policy.cjs');
 
 function length(value) { const n = Number(value); return /^\d+$/.test(value || '') && Number.isSafeInteger(n) ? n : null; }
 function rangeInfo(status, headers, offset) {
   if (status === 200) return {append:false,total:length(headers['content-length'])};
-  if (status !== 206 || !offset) throw Error(`Сервер вернул HTTP ${status}.`);
+  if (status !== 206 || !offset) throw issue([403,404,429].includes(status)?`HTTP_${status}`:'HTTP_RESPONSE');
   const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(headers['content-range'] || '');
   const start = length(m?.[1]), end = length(m?.[2]), total = length(m?.[3]), size = length(headers['content-length']);
   if (!m || start !== offset || total === null || end === null || end !== total - 1 || start > end || (size !== null && size !== end - start + 1)) throw Error('Сервер вернул неверный диапазон файла.');
@@ -23,89 +24,152 @@ function nameFromURL(raw) {
   base = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^[ .]+|[ .]+$/g,'').slice(0,160);
   return !base || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(base) ? 'download' : base;
 }
+const reportPhases=new Set(['connecting','metadata','waiting-metadata','pieces','transfer','verifying','saving']);
+const reportStatuses=new Set(['queued','running','paused','pausing','scheduling','canceling','canceled','removing','error','done']);
+const interrupted=new Set(['queued','running','pausing','canceling','removing','scheduling']);
+const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
+const summary=stats=>({peers:count(stats?.peers),peakPeers:count(stats?.peakPeers),trackers:count(stats?.trackers),trackerReplies:count(stats?.trackerReplies),dht:stats?.dht===true});
+const originName=raw=>typeof raw==='string'?raw.trim().slice(0,100):'';
 class DownloadQueue {
-  constructor(items, persist, {fetch = request, torrent = torrentDownload} = {}) {
-    this.items = items;
-    this.persist = persist;
-    this.fetch = fetch;
-    this.torrent = torrent;
-    this.active = null;
-    for (const j of items) if (['queued','running','pausing','canceling'].includes(j.status)) j.status = 'paused';
+  constructor(items,persist,{fetch=request,torrent=torrentDownload,options={},space=ensureSpace,now=()=>new Date(),clock=()=>performance.now()}={}) {
+    Object.assign(this,{items,persist,fetch,torrent,space,now,clock,options:transferOptions(options)});
+    this.active=new Map();
+    for(const j of items)if(interrupted.has(j.status))j.status='paused';
+    this.scheduleTimer();
   }
-  list() { return this.items.map(({url, partial, validator, ...shown}) => shown); }
-  add(raw, file, {expectFile=false}={}) {
-    const url = webURL(raw).href;
-    if (this.items.length >= 200) throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
-    if (this.items.some(j => j.file.toLowerCase() === file.toLowerCase() && !['done','canceled'].includes(j.status))) throw Error('Этот путь уже используется.');
-    const id = randomUUID();
-    this.items.unshift({id, url, file, title:path.basename(file), partial:path.join(path.dirname(file), `.byazen-${id}.part`), status:'queued', bytes:0, total:null, validator:'', error:'', ...(expectFile?{expectFile:true}:{})});
-    this.persist(); this.pump();
+  scheduleTimer(){
+    clearInterval(this.timer);
+    if(this.options.schedule){this.timer=setInterval(()=>this.pump(),5000);this.timer.unref();}
   }
-  addTorrent(url,parent,label){
+  dispose(){clearInterval(this.timer);}
+  configure(options){this.options=transferOptions(options);this.scheduleTimer();this.pump();}
+  allowed(){return inDownloadWindow(this.options,this.now());}
+  waiting(){return this.items.filter(j=>j.status==='queued').reverse().sort((a,b)=>count(b.priority)-count(a.priority));}
+  find(id){const j=this.items.find(x=>x.id===id);if(!j)throw Error('Загрузка не найдена.');return j;}
+  list(){
+    const queued=this.waiting(), positions=new Map(queued.map((j,i)=>[j,i+1]));
+    const sorted=[...this.items.filter(j=>this.active.has(j)),...queued,...this.items.filter(j=>!this.active.has(j)&&!positions.has(j))];
+    return sorted.map(j=>{
+      const {url,partial,validator,expectedSha256,...shown}=j, active=this.active.get(j);
+      const moving=active&&j.status==='running'&&!['saving','verifying'].includes(j.phase);
+      return {...shown,position:positions.get(j)||null,telemetry:moving?active.meter.read(j.bytes||0,j.total,this.clock()):null,
+        diagnostic:j.kind==='torrent'?summary(active?.stats||j.diagnostic):null};
+    });
+  }
+  report(id){
+    const j=this.find(id);
+    return {kind:j.kind==='torrent'?'BitTorrent':'HTTP(S)',status:reportStatuses.has(j.status)?j.status:'unknown',phase:reportPhases.has(j.phase)?j.phase:'',code:knownCode(j.errorCode),received:count(j.bytes),total:j.total==null?null:count(j.total),
+      ...(j.kind==='torrent'?{discovery:summary(this.active.get(j)?.stats||j.diagnostic)}:{})};
+  }
+  add(raw,file,{expectFile=false,origin,sha256}={}) {
+    const url=webURL(raw).href, expectedSha256=cleanHash(sha256);
+    if(this.items.length>=200)throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
+    if(this.items.some(j=>j.file.toLowerCase()===file.toLowerCase()&&!['done','canceled'].includes(j.status)))throw Error('Этот путь уже используется.');
+    const id=randomUUID();
+    this.items.unshift({id,url,file,title:path.basename(file),origin:originName(origin),partial:path.join(path.dirname(file),`.byazen-${id}.part`),status:'queued',bytes:0,total:null,validator:'',error:'',expectedSha256,expectFile:expectFile===true});
+    this.persist();this.pump();
+  }
+  addTorrent(url,parent,label,origin){
     magnetV1(url);
     if(this.items.length>=200)throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
     const id=randomUUID();
     let title=String(label||'Torrent').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').trim().replace(/[. ]+$/,'').slice(0,90)||'Torrent';
     if(/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(title))title='Torrent '+title;
     const folder=path.join(parent,`${title} (${id.slice(0,8)})`);
-    this.items.unshift({id,url,file:folder,title,kind:'torrent',partial:path.join(parent,`.byazen-${id}.part`),status:'queued',bytes:0,total:null,error:''});
+    this.items.unshift({id,url,file:folder,title,origin:originName(origin),kind:'torrent',partial:path.join(parent,`.byazen-${id}.part`),status:'queued',bytes:0,total:null,error:''});
     this.persist();this.pump();
   }
   clearPartial(job){return fsp.rm(job.partial,{force:true,recursive:job.kind==='torrent'});}
-  async action(id, op) {
-    const j = this.items.find(x => x.id === id);
-    if (!j) throw Error('Загрузка не найдена.');
-    if (this.active?.job === j) {
-      if (!['pause','cancel'].includes(op) || j.status !== 'running') throw Error('Действие сейчас недоступно.');
-      j.status = op === 'pause' ? 'pausing' : 'canceling';
-      this.active.controller.abort();
-    } else if (op === 'pause' && j.status === 'queued') j.status = 'paused';
-    else if (op === 'cancel' && ['queued','paused','error'].includes(j.status)) { await this.clearPartial(j); j.status = 'canceled'; j.bytes = 0; }
-    else if (op === 'resume' && ['paused','error','canceled'].includes(j.status)) { j.error = ''; j.status = 'queued'; }
-    else if (op === 'remove' && ['done','canceled','error','paused'].includes(j.status)) { await this.clearPartial(j); this.items.splice(this.items.indexOf(j),1); }
-    else throw Error('Действие сейчас недоступно.');
-    this.persist(); this.pump();
+  async action(id,op){
+    const j=this.find(id),active=this.active.get(j);
+    if(active){
+      if(!['pause','cancel'].includes(op)||j.status!=='running'||j.phase==='saving')throw Error('Действие сейчас недоступно.');
+      j.status=op==='pause'?'pausing':'canceling';active.controller.abort();
+    }else if(op==='first'&&j.status==='queued'){
+      // Re-number waiting priorities to keep values bounded and stable on disk.
+      const old=this.waiting().filter(x=>x!==j&&count(x.priority));
+      old.reverse().forEach((x,i)=>{x.priority=i+1;});j.priority=old.length+1;
+    }else if(op==='normal'&&j.status==='queued')j.priority=0;
+    else if(op==='pause'&&j.status==='queued')j.status='paused';
+    else if(op==='resume'&&['paused','error','canceled'].includes(j.status)){j.error='';j.errorCode='';j.completedAt='';j.status='queued';}
+    else if((op==='cancel'&&['queued','paused','error'].includes(j.status))||(op==='remove'&&['done','canceled','error','paused'].includes(j.status))){
+      const last=j.status;j.status=op==='cancel'?'canceling':'removing';
+      try{await this.clearPartial(j);}catch(e){j.status=last;throw e;}
+      if(op==='remove')this.items.splice(this.items.indexOf(j),1);
+      else{j.status='canceled';j.bytes=0;j.error='';j.errorCode='';j.completedAt=this.now().toISOString();}
+    }else throw Error('Действие сейчас недоступно.');
+    this.persist();this.pump();
   }
-  pump() {
-    if (this.active) return;
-    const j = this.items.findLast(x => x.status === 'queued');
-    if (!j) return;
-    const controller = new AbortController();
-    this.active = {job:j,controller};
-    j.status = 'running'; this.persist();
-    const perform=j.kind==='torrent'?this.torrent(j,controller.signal,this.persist):this.run(j,controller.signal);
-    perform.then(() => {j.status = 'done';}, async err => {
-      if (j.status === 'canceling') { await this.clearPartial(j); j.status = 'canceled'; j.bytes = 0; }
-      else if (j.status === 'pausing') j.status = 'paused';
-      else throw err;
-    }).catch(err => {j.status = 'error'; j.error = err.message;}).finally(() => {
-      this.active = null; this.persist(); this.pump();
-    });
+  pump(){
+    if(!this.allowed()){
+      let changed=false;
+      for(const [job,{controller}] of this.active)if(job.status==='running'&&!['verifying','saving'].includes(job.phase)){
+        job.status='scheduling';controller.abort();changed=true;
+      }
+      if(changed)this.persist();
+      return;
+    }
+    while(this.active.size<this.options.parallel){
+      const j=this.waiting()[0];if(!j)break;this.start(j);
+    }
   }
-  async run(j, signal) {
+  start(j){
+    const controller=new AbortController(),stats={},opts=this.options;
+    this.active.set(j,{controller,stats,meter:new TransferMeter(j.bytes||0,this.clock())});
+    j.status='running';j.priority=0;j.phase='connecting';j.verified=false;this.persist();
+    Promise.resolve().then(()=>j.kind==='torrent'?this.torrent(j,controller.signal,this.persist,{stats,receiveLimit:opts.receiveKiB*1024,sendLimit:opts.sendKiB*1024,checkSpace:this.space}):this.run(j,controller.signal,opts))
+      .then(()=>{j.status='done';j.completedAt=this.now().toISOString();},async err=>{
+        if(j.status==='canceling'){await this.clearPartial(j);Object.assign(j,{status:'canceled',bytes:0,error:'',errorCode:'',completedAt:this.now().toISOString()});}
+        else if(j.status==='pausing')j.status='paused';
+        else if(j.status==='scheduling')j.status='queued';
+        else throw err;
+      }).catch(err=>{const {code,message}=downloadError(err);Object.assign(j,{status:'error',error:message,errorCode:code});}).finally(()=>{
+        if(j.kind==='torrent')j.diagnostic=summary(stats);
+        this.active.delete(j);this.persist();this.pump();
+      });
+  }
+  async run(j,signal,options=this.options) {
     const stat = await fsp.lstat(j.partial).catch(e => { if (e.code !== 'ENOENT') throw e; });
     if (stat && !stat.isFile()) throw Error('Небезопасный временный путь.');
     const offset = j.validator && stat?.size && stat.size !== j.total ? stat.size : 0;
-    const {res} = await this.fetch(j.url, {signal, headers:offset ? {Range:`bytes=${offset}-`, 'If-Range':j.validator} : {}});
+    const idleMs=options.receiveKiB?Math.max(18000,Math.ceil(128000/options.receiveKiB)+10000):18000;
+    const {res} = await this.fetch(j.url, {signal,idleMs, headers:offset ? {Range:`bytes=${offset}-`, 'If-Range':j.validator} : {}});
     let info;
+    // IncomingMessage may abort while we check the destination before pipeline attaches.
+    res.on('error',()=>{});
     try {
       signal.throwIfAborted();
       info = rangeInfo(res.statusCode,res.headers,offset);
       const contentType=String(res.headers['content-type']||'').split(';')[0].trim().toLowerCase();
-      if(j.expectFile&&['text/html','application/xhtml+xml'].includes(contentType))throw Error('Источник вернул веб-страницу вместо файла. Выберите другую ссылку или раздачу.');
+      if(j.expectFile&&['text/html','application/xhtml+xml'].includes(contentType))throw issue('WEB_PAGE');
       if (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity') throw Error('Сжатый ответ загрузки не поддерживается.');
       const nextValidator = validator(res.headers);
       if (info.append && ((nextValidator && nextValidator !== j.validator) || (j.total !== null && j.total !== info.total))) throw Error('Файл на сервере изменился.');
+      if(j.testBytes&&info.total!==j.testBytes)throw issue('TEST_SIZE');
+      if(info.total!==null)await this.space(path.dirname(j.file),Math.max(0,info.total-(info.append?offset:0)));
+      signal.throwIfAborted();
+      j.phase='transfer';
       j.validator = nextValidator || (info.append ? j.validator : '');
       j.total = info.total; j.bytes = info.append ? offset : 0;
       const out = await fsp.open(j.partial, (info.append ? fs.constants.O_APPEND : fs.constants.O_TRUNC) | fs.constants.O_CREAT | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0), 0o600);
       this.persist();
-      const progress = new Transform({transform(chunk, _, cb) { j.bytes += chunk.length; cb(null,chunk); }});
+      const pace=throttle(options.receiveKiB*1024,signal);
+      const progress=new Transform({transform(chunk,_,cb){
+        if(j.testBytes&&j.bytes+chunk.length>j.testBytes)return cb(issue('TEST_SIZE'));
+        pace(chunk.length).then(()=>{j.bytes+=chunk.length;cb(null,chunk);},cb);
+      }});
       await pipeline(res,progress,out.createWriteStream(),{signal});
       if (j.total !== null && j.bytes !== j.total) throw Error('Получен неполный файл.');
+      if(j.expectedSha256){
+        j.phase='verifying';
+        try{await verifyFile(j.partial,j.expectedSha256,signal);}
+        catch(e){if(e.code==='SHA_MISMATCH'){await this.clearPartial(j);j.bytes=0;j.validator='';}throw e;}
+        j.verified=true;
+      }
       signal.throwIfAborted();
+      j.phase='saving';
       await fsp.link(j.partial,j.file).catch(async e => {
-        if (e.code === 'EEXIST') throw Error('Файл назначения уже существует. Переименуйте или переместите его.');
+        if (e.code === 'EEXIST') throw issue('EEXIST');
         if (!['EPERM','ENOTSUP','EXDEV','EOPNOTSUPP','EACCES'].includes(e.code)) throw e;
         await fsp.copyFile(j.partial,j.file,fs.constants.COPYFILE_EXCL);
       });

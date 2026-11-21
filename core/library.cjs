@@ -1,6 +1,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const {spawn} = require('node:child_process');
+const progressStates=new Set(['planned','playing','finished','shelved']);
 function cleanGame(input) {
   if (!input || typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > 160) throw Error('Укажите название игры (до 160 символов).');
   const collections = [...new Set((Array.isArray(input.collections) ? input.collections : []).filter(s => typeof s === 'string').map(s => s.trim().slice(0, 50)).filter(Boolean))].slice(0, 15);
@@ -8,7 +9,10 @@ function cleanGame(input) {
     if (typeof p?.name !== 'string' || !p.name.trim() || !Array.isArray(p.args) || p.args.length > 64 || p.args.some(a => typeof a !== 'string' || a.length > 1024 || a.includes('\0'))) throw Error('Некорректный профиль запуска.');
     return {name: p.name.trim().slice(0, 50), args: p.args};
   });
-  return {title:input.title.trim(), favorite: input.favorite === true, collections, profiles};
+  return {title:input.title.trim(), favorite: input.favorite === true, collections, profiles,
+    progress:progressStates.has(input.progress)?input.progress:'',
+    rating:Number.isInteger(input.rating)&&input.rating>=1&&input.rating<=10?input.rating:0,
+    notes:typeof input.notes==='string'?input.notes.trim().slice(0,4000):'' };
 }
 async function prepareLaunch(exe, args = [], {platform = process.platform, stat = fs.stat} = {}) {
   if (platform !== 'win32') throw Error('Запуск .exe доступен в Windows.');

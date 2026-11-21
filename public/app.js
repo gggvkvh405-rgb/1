@@ -1,3 +1,4 @@
+import {humanBytes,isHistory,transferLabel,rateLabel,discoveryLabel} from './download-view.js';
 import {prepareWallpaper,readWallpaper,saveWallpaper} from './wallpaper-store.js';
 import {collections,sceneCollections,sceneThemes,visualThemes,classicThemes,getTheme,findThemes} from './themes.js';
 import {openDownloadPicker} from './download-picker.js';
@@ -11,7 +12,7 @@ const $ = (s, container=document) => container.querySelector(s);
 const content=$('#content'), dialog=$('#dialog'), dialogBody=$('#dialog-body');
 const sections = {home:['Главная','home'], catalog:['Каталог','grid'],library:['Библиотека','library'],downloads:['Загрузки','download'],rankings:['Рейтинги','trophy'],sources:['Источники','layers'],settings:['Настройки','settings']};
 const esc = (x='') => String(x??'').replace(/[&<>"']/g, a=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[a]));
-const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null};
+const state = {section:'home', settings:{name:'Игрок',theme:'dark',motion:false,region:'DE'},library:[],featured:0,tab:0,filter:{term:'',page:1},libraryFilter:'all',libraryProgress:'',collection:'',srcTerm:'',srcPage:1,srcId:'',themeGroup:'',themeQuery:'',wallpaper:null,downloadTab:'active'};
 let renderId=0,customURL,disposeWallpaperPreview;
 const details = (icon,title,desc,action='')=>`<div class="empty"><span class="empty-icon">${I(icon)}</span><h3>${esc(title)}</h3><p>${esc(desc)}</p>${action}</div>`;
 const btn = (label,action,glyph='',classes='')=>`<button type="button" class="btn ${classes}" data-action="${action}">${glyph?I(glyph):''}${label}</button>`;
@@ -194,21 +195,24 @@ function rankings(){
  <article class="list-item"><span class="list-icon">${I('trophy')}</span><div class="list-copy"><h3>Самые продаваемые</h3><p>Актуальный рейтинг на официальной странице Steam Charts.</p></div>${btn('Открыть в Steam','steam-charts','external')}</article>
  </div>`;
 }
+const gameProgress=[['planned','Хочу пройти'],['playing','Играю'],['finished','Пройдено'],['shelved','Отложено']];
+const gameProgressLabel=Object.fromEntries(gameProgress);
 function library(){
  const collections=[...new Set(state.library.flatMap(g=>g.collections))].sort((a,b)=>a.localeCompare(b,'ru'));
- let rows=state.library.filter(g=>(state.libraryFilter==='all'||(state.libraryFilter==='fav'&&g.favorite)||(state.libraryFilter==='recent'&&g.lastPlayed))&&(!state.collection||g.collections.includes(state.collection)));
+ let rows=state.library.filter(g=>(state.libraryFilter==='all'||(state.libraryFilter==='fav'&&g.favorite)||(state.libraryFilter==='recent'&&g.lastPlayed))&&(!state.collection||g.collections.includes(state.collection))&&(!state.libraryProgress||g.progress===state.libraryProgress));
  if(state.libraryFilter==='recent')rows.sort((a,b)=>b.lastPlayed.localeCompare(a.lastPlayed));
  content.innerHTML=`${head('ВАША КОЛЛЕКЦИЯ','Библиотека','Добавляйте установленные игры и запускайте их из одного места.',btn('Добавить игру','new-game','plus','primary'))}
- <div class="toolbar"><div class="tabs">${[['all','game','Все игры'],['fav','star','Избранное'],['recent','clock','Недавние']].map(([k,g,l])=>`<button class="tab ${state.libraryFilter===k?'selected':''}" data-action="library-tab" data-tab="${k}">${I(g)}${l}</button>`).join('')}</div>${pick('collection',[['','Все коллекции'],...collections.map(c=>[c,c])],state.collection,'Коллекция')}</div>
- ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div></div><div class="item-actions"><button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
+ <div class="toolbar"><div class="tabs">${[['all','game','Все игры'],['fav','star','Избранное'],['recent','clock','Недавние']].map(([k,g,l])=>`<button class="tab ${state.libraryFilter===k?'selected':''}" data-action="library-tab" data-tab="${k}">${I(g)}${l}</button>`).join('')}</div><div class="row">${pick('collection',[['','Все коллекции'],...collections.map(c=>[c,c])],state.collection,'Коллекция')}${pick('library-progress',[['','Любой статус'],...gameProgress],state.libraryProgress,'Статус прохождения')}</div></div>
+ ${rows.length?`<div class="item-list">${rows.map(g=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${g.exe?esc(g.exe):'Файл .exe не выбран'}${g.lastPlayed?' · Запуск: '+date(g.lastPlayed):''}</p><div class="chips">${gameProgressLabel[g.progress]?`<span class="chip ${g.progress==='finished'?'good':''}">${esc(gameProgressLabel[g.progress])}</span>`:''}${g.rating?`<span class="chip" title="Моя оценка">★ ${esc(g.rating)}/10</span>`:''}${g.collections.map(c=>`<span class="chip">${esc(c)}</span>`).join('')}</div>${g.notes?`<details class="game-notes"><summary>Заметки</summary><p>${esc(g.notes)}</p></details>`:''}</div><div class="item-actions"><button class="icon-btn ${g.favorite?'starred':''}" data-action="favorite" data-id="${g.id}" aria-label="Избранное" aria-pressed="${g.favorite}" title="Избранное">${I('star')}</button><button class="icon-btn" data-action="edit-game" data-id="${g.id}" aria-label="Редактировать" title="Редактировать">${I('edit')}</button><button class="btn primary" data-action="launch-dialog" data-id="${g.id}" ${!g.exe?'disabled':''}>${I('play')} Запустить</button></div></article>`).join('')}</div>`:details('library',state.library.length?'Нет игр по этому фильтру':'Библиотека пока пуста',state.library.length?'Выберите другую коллекцию или подборку.':'Добавьте первую игру и укажите путь к её исполняемому файлу.',!state.library.length?btn('Добавить игру','new-game','plus','primary'):'' )}`;
  $('[name="collection"]').onchange=e=>{state.collection=e.target.value;run(render);};
+ $('[name="library-progress"]').onchange=e=>{state.libraryProgress=e.target.value;run(render);};
 }
 let chosenExe=null;
 function profileRow(p={name:'',args:[]}){return `<div class="profile-row"><input required maxlength="50" data-profile-name value="${esc(p.name)}" placeholder="Название профиля" aria-label="Название профиля"><textarea rows="2" data-profile-args placeholder="Один аргумент на строку" aria-label="Аргументы запуска">${esc(p.args.join('\n'))}</textarea><button type="button" class="icon-btn" data-action="profile-remove" aria-label="Удалить профиль">${I('close')}</button></div>`;}
 function editGame(g){
  chosenExe=null;
- showDialog(g?'Редактировать игру':'Добавить игру',`<form id="game-form"><label class="field"><span>Название игры</span><input name="title" required maxlength="160" value="${esc(g?.title)}" placeholder="Например, Minecraft"></label><div class="field"><span>Исполняемый файл</span><div class="row exe-row"><span id="exe-path">${esc(g?.exe||'Файл .exe не выбран')}</span>${btn('Выбрать .exe','choose-exe','folder')}</div></div><label class="field"><span>Коллекции</span><input name="collections" maxlength="750" value="${esc(g?.collections.join(', '))}" placeholder="Через запятую: RPG, На вечер"></label><label class="toggle"><input name="favorite" type="checkbox" ${g?.favorite?'checked':''}> В избранном</label><div class="profile-head"><strong>Профили запуска</strong>${btn('Добавить профиль','profile-add','plus')}</div><p class="muted small">Каждый аргумент укажите на отдельной строке, без внешних кавычек.</p><div id="profiles">${(g?.profiles||[]).map(profileRow).join('')}</div><div class="dialog-actions">${g?`<button type="button" class="btn danger" data-action="remove-game" data-id="${g.id}">Удалить игру</button>`:''}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></form>`);
- $('#game-form').onsubmit=e=>{e.preventDefault();const form=new FormData(e.currentTarget); const profiles=[...$('#profiles').children].map(node=>({name:$('[data-profile-name]',node).value,args:$('[data-profile-args]',node).value.split(/\r?\n/).filter(x=>x.length)}));run(async()=>{await api.saveGame(g?.id||null,{title:form.get('title'),collections:form.get('collections').split(','),favorite:form.has('favorite'),profiles},chosenExe?.token||null);await refreshLibrary();dialog.close();toast('Игра сохранена.');});};
+ showDialog(g?'Редактировать игру':'Добавить игру',`<form id="game-form"><label class="field"><span>Название игры</span><input name="title" required maxlength="160" value="${esc(g?.title)}" placeholder="Например, Minecraft"></label><div class="field"><span>Исполняемый файл</span><div class="row exe-row"><span id="exe-path">${esc(g?.exe||'Файл .exe не выбран')}</span>${btn('Выбрать .exe','choose-exe','folder')}</div></div><label class="field"><span>Коллекции</span><input name="collections" maxlength="750" value="${esc(g?.collections.join(', '))}" placeholder="Через запятую: RPG, На вечер"></label><div class="settings-fields"><label class="field"><span>Статус прохождения</span>${pick('progress',[['','Не задан'],...gameProgress],g?.progress||'','Статус прохождения')}</label><label class="field"><span>Моя оценка</span>${pick('rating',[['0','Без оценки'],...Array.from({length:10},(_,i)=>[String(i+1),`${i+1}/10`])],String(g?.rating||0),'Моя оценка')}</label></div><label class="field"><span>Заметки к игре</span><textarea name="notes" rows="3" maxlength="4000" placeholder="Где остановился, билд или планы…">${esc(g?.notes)}</textarea></label><label class="toggle"><input name="favorite" type="checkbox" ${g?.favorite?'checked':''}> В избранном</label><div class="profile-head"><strong>Профили запуска</strong>${btn('Добавить профиль','profile-add','plus')}</div><p class="muted small">Каждый аргумент укажите на отдельной строке, без внешних кавычек.</p><div id="profiles">${(g?.profiles||[]).map(profileRow).join('')}</div><div class="dialog-actions">${g?`<button type="button" class="btn danger" data-action="remove-game" data-id="${g.id}">Удалить игру</button>`:''}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></form>`);
+ $('#game-form').onsubmit=e=>{e.preventDefault();const form=new FormData(e.currentTarget); const profiles=[...$('#profiles').children].map(node=>({name:$('[data-profile-name]',node).value,args:$('[data-profile-args]',node).value.split(/\r?\n/).filter(x=>x.length)}));run(async()=>{await api.saveGame(g?.id||null,{title:form.get('title'),collections:form.get('collections').split(','),favorite:form.has('favorite'),profiles,progress:form.get('progress'),rating:Number(form.get('rating')),notes:form.get('notes')},chosenExe?.token||null);await refreshLibrary();dialog.close();toast('Игра сохранена.');});};
 }
 async function refreshLibrary(){state.library=await api.library();if(!state.library.some(g=>g.collections.includes(state.collection)))state.collection='';sidebar();if(state.section==='library')await render();}
 function launchDialog(g){
@@ -217,38 +221,78 @@ function launchDialog(g){
  $('#launch-form').onsubmit=e=>{e.preventDefault();const p=Number(new FormData(e.currentTarget).get('profile'));run(async()=>{await launch(g.id,p);dialog.close();});};
 }
 async function launch(id,p){await api.launchGame(id,p);await refreshLibrary();toast('Игра запущена.');}
-const torrentPhases={metadata:'Поиск участников', 'waiting-metadata':'Ожидаем метаданные от участников',pieces:'BitTorrent · скачивается',saving:'Сохранение файлов'};
-const statuses={queued:'В очереди',running:'Скачивается',paused:'На паузе',pausing:'Останавливается',canceling:'Отменяется',canceled:'Отменено',error:'Ошибка',done:'Завершено'};
-const humanBytes = n=>{if(n==null)return 'Размер неизвестен';const u=['Б','КБ','МБ','ГБ','ТБ'],p=n?Math.min(Math.floor(Math.log(n)/Math.log(1024)),4):0;return (n/1024**p).toLocaleString('ru',{maximumFractionDigits:p?1:0})+' '+u[p];};
 function downloads(n){
- content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками в одной очереди.',btn('Добавить загрузку','new-download','plus','primary'))}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
+ const tools=`${api.checkDownload?btn('Проверить скачивание','download-check','check'):''}${api.saveDownloadOptions?btn('Настройки очереди','download-options','sliders'):''}${btn('Добавить загрузку','new-download','plus','primary')}`;
+ content.innerHTML=`${head('ПЕРЕДАЧА ФАЙЛОВ','Загрузки','Управляйте HTTP(S)- и BitTorrent-загрузками.',tools)}<div class="notice">${I('alert')}<span>ByAzen не запускает скачанные файлы. BitTorrent обменивается частями файла с другими участниками во время загрузки.</span></div><div class="download-overview" id="dl-overview"></div><div class="tabs download-tabs" aria-label="Вкладки загрузок">${[['active','Очередь'],['history','История']].map(([id,label])=>`<button type="button" class="tab ${state.downloadTab===id?'selected':''}" aria-pressed="${state.downloadTab===id}" data-action="download-tab" data-tab="${id}">${I(id==='active'?'download':'clock')} ${label}</button>`).join('')}</div><div id="dl-list">${details('download','Читаем очередь…','')}</div>`;
  run(()=>refreshDownloads(n));
 }
 let downloadRead=0;
+async function downloadSnapshot(){return api.downloadInfo?api.downloadInfo():{items:await api.downloads(),allowed:true,options:{parallel:1}};}
+function downloadActions(j){
+ const locked=j.status==='running'&&j.phase==='saving';
+ const buttons=[
+  ['first','В начало',['queued']],['normal','Снять приоритет',j.priority?['queued']:[]],
+  ['pause','Пауза',locked?[]:['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],
+  ['cancel','Отменить',locked?[]:['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]
+ ].filter(([op,,states])=>states.includes(j.status)&&(op!=='first'||j.position!==1));
+ if(api.revealDownload&&['done','error'].includes(j.status))buttons.push(['folder','Папка']);
+ if(api.copyDownloadReport&&j.status==='error')buttons.push(['report','Копировать отчёт']);
+ return buttons.map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('');
+}
+function downloadCard(j,allowed){
+ const label=transferLabel(j,allowed),completed=j.completedAt&&isHistory(j)?` · ${esc(date(j.completedAt))}`:'';
+ return `<article class="list-item dl-item" data-state="${esc(j.status)}"><span class="list-icon">${I(j.status==='error'?'alert':j.status==='done'?'check':'download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip ${j.status==='done'?'good':''}">${esc(label)}</span>${j.verified&&j.status==='done'?' <span class="chip good">SHA-256 проверен</span>':''}</h3><p>${esc(j.origin|| (j.kind==='torrent'?'BitTorrent':'HTTP(S)'))}${completed}</p><p title="${esc(j.file)}">${esc(j.file)}</p><progress class="sr-only" aria-label="Прогресс загрузки"></progress><div class="motion-meter" aria-hidden="true"><span></span></div><p class="dl-stats"></p><div class="dl-live" hidden><span></span><span class="dl-chart" aria-hidden="true">${'<i></i>'.repeat(12)}</span></div><p class="dl-discovery" hidden></p><p class="dl-error" hidden></p></div><div class="item-actions">${downloadActions(j)}</div></article>`;
+}
 async function refreshDownloads(n){
- const request=++downloadRead, list=await api.downloads(), target=$('#dl-list');
+ const request=++downloadRead,{items,options,allowed}=await downloadSnapshot(),target=$('#dl-list');
  if(!current(n)||request!==downloadRead||!target)return;
- const html=list.length?`<div class="item-list">${list.map(j=>`<article class="list-item dl-item" data-state="${esc(j.status)}"><span class="list-icon">${I('download')}</span><div class="list-copy"><h3>${esc(j.title)} <span class="chip">${(j.kind==='torrent'&&j.status==='running'&&torrentPhases[j.phase])||statuses[j.status]||esc(j.status)}</span></h3><p>${esc(j.file)}</p><progress class="sr-only" aria-label="Прогресс загрузки"></progress><div class="motion-meter" aria-hidden="true"><span></span></div><p class="dl-stats"></p></div><div class="item-actions">${[['pause','Пауза',['queued','running']],['resume',j.status==='paused'?'Продолжить':'Повторить',['paused','error','canceled']],['cancel','Отменить',['queued','running','paused','error']],['remove','Убрать',['paused','done','error','canceled']]].filter(x=>x[2].includes(j.status)).map(([op,label])=>`<button class="btn" data-action="download-op" data-op="${op}" data-id="${esc(j.id)}">${label}</button>`).join('')}</div></article>`).join('')}</div>`:details('download','Очередь пуста',window.byazen?'Добавьте прямую или magnet-ссылку либо выберите игру из источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
+ const history=state.downloadTab==='history',list=items.filter(j=>isHistory(j)===history);
+ const scheduled=options?.schedule&&options.from!==options.until,active=items.filter(item=>item.status==='running').length;
+ const overview=$('#dl-overview'),banner=`<span>${I('download')} Активно: <strong>${active} / ${options?.parallel||1}</strong></span><span>${I('clock')} ${scheduled?`По расписанию: <strong>${esc(options.from)}–${esc(options.until)}</strong>${allowed?'':' · ожидаем начала'}`:'Без расписания'}</span><span>${I('check')} В истории: <strong>${items.filter(isHistory).length}</strong></span>`;
+ if(overview.innerHTML!==banner)overview.innerHTML=banner;
+ const html=list.length?`<div class="item-list">${list.map(j=>downloadCard(j,allowed)).join('')}</div>`:history?details('clock','История пуста','Здесь появятся завершённые и отменённые загрузки.'):details('download','Очередь пуста',window.byazen?'Добавьте прямую или magnet-ссылку либо выберите игру из источника.':'Управление файлами и очередь доступны в настольном приложении.',btn('Добавить загрузку','new-download','plus'));
  if(target._markup!==html){
-  const was=target.contains(document.activeElement)?document.activeElement.dataset:null;
-  const entering=target._markup===undefined;
+  const focused=target.contains(document.activeElement)?document.activeElement.dataset:null, entering=target._markup===undefined;
   target.innerHTML=html;target._markup=html;
   if(entering)reveal(target,'.dl-item,.empty','slide');
-  if(was)Array.from(target.querySelectorAll('button')).find(b=>b.dataset.op===was.op&&b.dataset.id===was.id)?.focus({preventScroll:true});
+  if(focused)Array.from(target.querySelectorAll('button')).find(b=>b.dataset.op===focused.op&&b.dataset.id===focused.id)?.focus({preventScroll:true});
  }
  target.querySelectorAll('.dl-item').forEach((row,i)=>{
   const j=list[i], progress=$('progress',row), meter=$('.motion-meter',row);
-  const total=j.total||1, value=j.status==='done'&&!j.total?1:j.bytes||0;
-  const pending=j.status==='running'&&j.total==null;
+  const total=j.total||1,value=j.status==='done'&&!j.total?1:j.bytes||0,pending=j.status==='running'&&j.total==null;
   progress.max=total;
   if(pending)progress.removeAttribute('value');else progress.value=value;
   meter.classList.toggle('is-indeterminate',pending);
   meter.style.setProperty('--fraction',Math.max(0,Math.min(1,value/total)));
-  const stats=$('.dl-stats',row), text=`${humanBytes(j.bytes)} / ${humanBytes(j.total)}${j.error?' · '+j.error:''}`;
-  if(stats.textContent!==text)stats.textContent=text;
+  function line(selector,text){const node=$(selector,row);if(node.textContent!==text)node.textContent=text;if(node.className!=='dl-stats')node.hidden=!text;}
+  line('.dl-stats',`${humanBytes(j.bytes)} / ${humanBytes(j.total)}`);
+  line('.dl-discovery',discoveryLabel(j));
+  line('.dl-error',j.status==='error'?j.error||'Не удалось завершить загрузку.':'');
+  const live=$('.dl-live',row),rate=rateLabel(j);live.hidden=!rate;
+  if(rate){
+   if(live.firstElementChild.textContent!==rate)live.firstElementChild.textContent=rate;
+   const trend=j.telemetry?.trend||[],max=Math.max(1,...trend);
+   $('.dl-chart',live).querySelectorAll('i').forEach((bar,k)=>bar.style.setProperty('--rate',Math.max(.06,(trend[k-(12-trend.length)]||0)/max)));
+  }
  });
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
+function downloadOptionsDialog(options){
+ const el=(name,label,value,min,max,description)=>`<label class="field"><span>${label}</span><input type="number" name="${name}" min="${min}" max="${max}" value="${value}" required><small class="muted small">${description}</small></label>`;
+ showDialog('Настройки очереди',`<form id="download-settings"><div class="download-option-fields">${el('parallel','Одновременных загрузок',options.parallel,1,4,'От 1 до 4 задач.')}${el('receive','Скачивание, КиБ/с',options.receiveKiB,0,102400,'Лимит на задачу. 0 — без ограничения.')}${el('send','Отдача BitTorrent, КиБ/с',options.sendKiB,16,10240,'Лимит на одну раздачу.')}</div><p class="muted small">Лимиты скорости применяются при следующем старте задачи.</p><label class="toggle"><input type="checkbox" name="schedule" ${options.schedule?'checked':''}> Загружать по расписанию</label><div class="download-option-fields schedule-fields"><label class="field"><span>Начало</span><input type="time" name="from" value="${esc(options.from)}" required></label><label class="field"><span>Конец</span><input type="time" name="until" value="${esc(options.until)}" required></label></div><p class="muted small">Местное время. Можно выбрать интервал через полночь. Одинаковое время означает весь день. Лаунчер должен быть открыт.</p><div class="dialog-actions">${btn('Отмена','close')}<button class="btn primary" type="submit">${I('check')} Сохранить</button></div></form>`,{eyebrow:'ЗАГРУЗКИ'});
+ const form=$('#download-settings');
+ form.onsubmit=e=>{e.preventDefault();const button=$('button[type=submit]',form),f=new FormData(form);button.disabled=true;
+  run(async()=>{try{await api.saveDownloadOptions({parallel:Number(f.get('parallel')),receiveKiB:Number(f.get('receive')),sendKiB:Number(f.get('send')),schedule:f.has('schedule'),from:f.get('from'),until:f.get('until')});if(form.isConnected&&dialog.open)dialog.close();await refreshDownloads(renderId);toast('Настройки очереди сохранены.');}finally{button.disabled=false;}});
+ };
+}
+function addDownloadDialog(){
+ showDialog('Новая загрузка',`<form id="new-download-form"><label class="field"><span>Прямая ссылка HTTP(S) или magnet</span><input name="url" required maxlength="4096" placeholder="https://… или magnet:?…" spellcheck="false"></label><label class="field"><span>SHA-256 (необязательно, только для HTTP/S)</span><input name="sha256" maxlength="64" pattern="[A-Fa-f0-9]{64}" spellcheck="false" placeholder="Контрольная сумма от издателя"></label><div class="dialog-actions">${btn('Отмена','close')}<button type="submit" class="btn primary">${I('folder')} Выбрать место</button></div></form>`);
+ const form=$('#new-download-form');
+ form.onsubmit=e=>{e.preventDefault();const values=new FormData(form),b=$('button[type=submit]',form);b.disabled=true;run(async()=>{
+  try{if(await api.addDownload(String(values.get('url')).trim(),String(values.get('sha256')).trim())){if(form.isConnected&&dialog.open)dialog.close();state.downloadTab='active';await render();toast('Загрузка добавлена.');}}
+  finally{b.disabled=false;}
+ });};
+}
 async function sources(n){
  content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',`${api.connectOnlineFix?btn('Подключить OnlineFix','source-onlinefix','link'): ''}${api.auditSources?btn('Проверить все источники','source-audit','refresh','primary'):''}${btn('Из файла','source-file','file')}`)}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><select name="sourceId" aria-label="Источник игр"><option value="">Все включённые источники</option></select><button class="btn" type="submit">${I('search')} Найти</button>${btn('Показать все','browse-sources','layers')}</form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div>${api.retrySourceLists?btn('Повторить загрузку списков','source-retry','refresh'):''}</div><div id="sources-list"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
@@ -351,7 +395,7 @@ function searchInSources(term){
 function openCatalogGame(product){
  if(!product)return;
  const version=renderId;
- openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
+ openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onPick:game=>openCatalogGame({title:game.title,preferred:game}),onAdded:()=>{state.downloadTab='active';go('downloads');toast('Загрузка добавлена.');}});
 }
 function setWallpaper(record){
  if(state.wallpaper?.blob!==record?.blob){
@@ -394,14 +438,18 @@ function themeGallery(){
  const active=getTheme(state.settings.theme),custom=state.wallpaper?.enabled&&customURL,cover=custom||active.asset||sceneThemes[0].asset;
  return `<header class="theme-showcase"><img src="${cover}" alt="" decoding="async"><div class="theme-showcase-copy"><div class="eyebrow"><i></i> BYAZEN / ОФОРМЛЕНИЕ</div><h2>Галерея фонов</h2><p>${visualThemes.length} фонов в ${collections.length} коллекциях — от аниме и кино до неона и космоса. Или загрузи своё изображение.</p><div class="theme-showcase-actions"><button class="btn primary" data-action="theme-custom">${I('plus')} Свой фон</button><button class="btn theme-classic-shortcut" data-action="theme-random">${I('shuffle')} Случайная тема</button><button class="btn theme-classic-shortcut" data-action="settings-jump" data-target="theme-classics">Классические</button><span class="chip">${custom?'Свой фон включён':`Активна: ${esc(active.name)}`}</span></div></div></header>
  ${custom?`<div class="wallpaper-active"><span>${I('check')} Используется своё изображение</span><button class="btn" data-action="theme-custom-disable">Вернуть фон темы</button></div>`:''}
- <div class="theme-quick" role="group" aria-label="Популярные коллекции">${[['','Все фоны'],...sceneCollections.map(c=>[c.id,c.name])].map(([id,name])=>`<button type="button" class="btn" data-theme-collection="${id}" aria-pressed="${id===state.themeGroup}">${esc(name)}</button>`).join('')}</div>
- <div class="theme-tools"><label class="theme-filter"><span>Коллекция</span><select id="theme-group" aria-label="Коллекция тем"><option value="">Все коллекции</option>${collections.map(c=>`<option value="${c.id}" ${c.id===state.themeGroup?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label class="theme-filter theme-search"><span>Поиск темы</span><span class="input-icon">${I('search')}<input id="theme-search" type="search" placeholder="Например, северное сияние" maxlength="60" value="${esc(state.themeQuery)}"></span></label></div>
+ <div class="theme-quick" role="group" aria-label="Популярные коллекции">${[['','Все фоны'],['favorites','Избранные темы'],...sceneCollections.map(c=>[c.id,c.name])].map(([id,name])=>`<button type="button" class="btn" data-theme-collection="${id}" aria-pressed="${id===state.themeGroup}">${esc(name)}</button>`).join('')}</div>
+ <div class="theme-tools"><label class="theme-filter"><span>Коллекция</span><select id="theme-group" aria-label="Коллекция тем"><option value="">Все коллекции</option><option value="favorites" ${state.themeGroup==='favorites'?'selected':''}>Избранные темы</option>${collections.map(c=>`<option value="${c.id}" ${c.id===state.themeGroup?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label><label class="theme-filter theme-search"><span>Поиск темы</span><span class="input-icon">${I('search')}<input id="theme-search" type="search" placeholder="Например, северное сияние" maxlength="60" value="${esc(state.themeQuery)}"></span></label></div>
  <p class="theme-count muted small" id="theme-count" aria-live="polite"></p><div id="theme-results" class="theme-grid theme-results"></div>
  <div class="theme-classics" id="theme-classics" tabindex="-1"><div class="section-heading"><h3>Классические темы</h3><span class="muted small">Без фоновых эффектов</span></div><div class="theme-grid classic-grid">${classicThemes.map(themeCard).join('')}</div></div>`;
 }
+function filteredThemes(){
+ const favorites=state.themeGroup==='favorites';
+ return findThemes(favorites?'':state.themeGroup,state.themeQuery).filter(t=>!favorites||state.settings.favoriteThemes?.includes(t.id));
+}
 function drawThemeResults(){
- const results=$('#theme-results'),found=findThemes(state.themeGroup,state.themeQuery);
- results.innerHTML=found.length?found.map(themeCard).join(''):details('search','Темы не найдены','Введи другое название или выбери другую коллекцию.');
+ const results=$('#theme-results'),found=filteredThemes();
+ results.innerHTML=found.length?found.map(themeCard).join(''):(state.themeGroup==='favorites'&&!state.themeQuery?details('star','Избранных тем пока нет','Открой предпросмотр любой темы и нажми «В избранное».'):details('search','Темы не найдены','Введи другое название или выбери другую коллекцию.'));
  $('#theme-count').textContent=`Показано: ${found.length} из ${visualThemes.length}`;
  applyThemeCardStyle(results);
 }
@@ -418,8 +466,8 @@ function drawThemes(){
  $('#theme-search').oninput=e=>{state.themeQuery=e.target.value;drawThemeResults();};
 }
 function previewTheme(id){
- const theme=getTheme(id),active=theme.id===state.settings.theme;
- showDialog(esc(theme.name),`<div class="theme-demo" data-theme-id="${theme.id}" data-demo-group="${theme.atmosphere||theme.group}">${miniature(theme,false)}<span class="theme-demo-shade" aria-hidden="true"></span><span class="theme-atmosphere" aria-hidden="true"></span><div class="theme-demo-ui" aria-hidden="true"><span class="theme-demo-logo">B</span><strong>ByAzen</strong><span>Каталог</span><span>Библиотека</span></div><div class="theme-demo-detail" aria-hidden="true"><strong>${esc(theme.category)}</strong><span>${esc(theme.effect)}</span></div></div><p class="theme-preview-summary muted small">${theme.asset?`Эффект: ${esc(theme.effect)}. ${state.wallpaper?.enabled?'Чтобы увидеть этот фон в лаунчере, нажми «Вернуть фон темы».':'Фон используется во всех разделах лаунчера.'}`:'Однотонный фон без анимации.'}</p><div class="dialog-actions"><button type="button" class="btn" data-action="close">${active?'Закрыть':'Отмена'}</button>${active?'':`<button type="button" class="btn primary" data-action="theme" data-theme-id="${theme.id}">${I('check')} Применить тему</button>`}</div>`,{variant:'theme',eyebrow:'ПРЕДПРОСМОТР ТЕМЫ'});
+ const theme=getTheme(id),active=theme.id===state.settings.theme,marked=state.settings.favoriteThemes?.includes(theme.id);
+ showDialog(esc(theme.name),`<div class="theme-demo" data-theme-id="${theme.id}" data-demo-group="${theme.atmosphere||theme.group}">${miniature(theme,false)}<span class="theme-demo-shade" aria-hidden="true"></span><span class="theme-atmosphere" aria-hidden="true"></span><div class="theme-demo-ui" aria-hidden="true"><span class="theme-demo-logo">B</span><strong>ByAzen</strong><span>Каталог</span><span>Библиотека</span></div><div class="theme-demo-detail" aria-hidden="true"><strong>${esc(theme.category)}</strong><span>${esc(theme.effect)}</span></div></div><p class="theme-preview-summary muted small">${theme.asset?`Эффект: ${esc(theme.effect)}. ${state.wallpaper?.enabled?'Чтобы увидеть этот фон в лаунчере, нажми «Вернуть фон темы».':'Фон используется во всех разделах лаунчера.'}`:'Однотонный фон без анимации.'}</p><div class="dialog-actions">${theme.asset?`<button type="button" class="btn theme-bookmark" aria-pressed="${Boolean(marked)}" data-action="theme-favorite" data-theme-id="${theme.id}">${I('star')} <span>${marked?'В избранном':'В избранное'}</span></button>`:''}<button type="button" class="btn" data-action="close">${active?'Закрыть':'Отмена'}</button>${active?'':`<button type="button" class="btn primary" data-action="theme" data-theme-id="${theme.id}">${I('check')} Применить тему</button>`}</div>`,{variant:'theme',eyebrow:'ПРЕДПРОСМОТР ТЕМЫ'});
  applyThemeCardStyle(dialog);
 }
 function customWallpaperDialog(){
@@ -468,15 +516,11 @@ function customWallpaperDialog(){
 dialog.addEventListener('close',()=>{if(!dialog.open)disposeWallpaperPreview?.();});
 function settings(){
  content.innerHTML=`${head('ПЕРСОНАЛИЗАЦИЯ','Настройки','Настройте профиль, оформление и поведение лаунчера.')}
- <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button></div>
+ <div class="settings-tabs" aria-label="Разделы настроек"><button class="btn" data-action="settings-jump" data-target="themes">${I('spark')} Темы</button><button class="btn" data-action="settings-jump" data-target="settings-form">${I('settings')} Профиль и движение</button>${btn('Что нового','release-notes','spark')}</div>
  <section class="theme-pane" id="themes" aria-label="Галерея тем" tabindex="-1"></section>
- <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
+ <form id="settings-form" class="pane settings-pane" tabindex="-1"><h2>Профиль и движение</h2><div class="settings-fields"><label class="field"><span>Имя профиля</span><input name="name" required maxlength="32" value="${esc(state.settings.name)}"></label><label class="field"><span>Регион Steam по умолчанию</span>${pick('region',regions,state.settings.region,'Регион Steam')}</label><label class="field"><span>Открывать при запуске</span>${pick('startSection',[['home','Главная'],['library','Библиотека'],['catalog','Каталог'],['downloads','Загрузки'],['sources','Источники'],['rankings','Рейтинги']],state.settings.startSection||'home','Открывать при запуске')}</label></div><label class="toggle"><input type="checkbox" name="motion" ${state.settings.motion?'checked':''}> Уменьшить движение</label><p class="muted small">Отключает анимацию фона и интерфейса. Системная настройка уменьшения движения учитывается всегда.</p><button class="btn primary" type="submit">${I('check')} Сохранить настройки</button></form>`;
  drawThemes();
- $('#settings-form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{state.settings=await api.saveSettings({...state.settings,name:f.get('name').trim()||'Игрок',region:f.get('region'),motion:f.has('motion')});state.filter.cc=state.settings.region;applyTheme();sidebar();toast('Настройки сохранены.');});};
-}
-function urlDialog(title,desc,callback){
- showDialog(title,`<p class="muted">${desc}</p><form id="url-form"><label class="field"><span>URL</span><input type="url" name="url" placeholder="https://…" required maxlength="4096"></label><div class="dialog-actions"><button class="btn primary" type="submit">${I('arrow')} Продолжить</button></div></form>`);
- $('#url-form').onsubmit=e=>{e.preventDefault();const f=e.currentTarget,submit=$('button[type="submit"]',f), url=new FormData(f).get('url');submit.disabled=true;run(async()=>{try{await callback(url);}finally{submit.disabled=false;}});};
+ $('#settings-form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{state.settings=await api.saveSettings({...state.settings,name:f.get('name').trim()||'Игрок',region:f.get('region'),startSection:f.get('startSection'),motion:f.has('motion')});state.filter.cc=state.settings.region;applyTheme();sidebar();toast('Настройки сохранены.');});};
 }
 function confirmDialog(title,desc,callback){
  showDialog(title,`<p class="muted">${desc}</p><div class="dialog-actions">${btn('Отмена','close')}<button class="btn danger" id="confirm-action">Подтвердить</button></div>`);
@@ -513,8 +557,23 @@ async function dispatch(b){
   case 'favorite':return api.favorite(d.id).then(refreshLibrary);
   case 'remove-game':return confirmDialog('Удалить игру?', 'Это удалит запись из библиотеки, но не файлы игры.',async()=>{await api.removeGame(d.id);await refreshLibrary();});
   case 'launch-dialog':if(g)return launchDialog(g);break;
-  case 'new-download':return urlDialog('Новая загрузка','Укажите прямую HTTP(S)-ссылку на файл или magnet-ссылку. Затем выберите место сохранения.',async url=>{const added=await api.addDownload(url);if(added){dialog.close();await refreshDownloads(renderId);toast('Загрузка добавлена.');}});
-  case 'download-op':return api.downloadAction(d.id,d.op).then(()=>refreshDownloads(renderId));
+  case 'new-download':return addDownloadDialog();
+  case 'download-tab':state.downloadTab=d.tab==='history'?'history':'active';return render();
+  case 'download-options':return downloadOptionsDialog((await downloadSnapshot()).options);
+  case 'download-check':{
+   b.disabled=true;
+   try{
+    const result=await api.checkDownload();if(!result)return;
+    const stages={disk:'Запись на диск',network:'Сетевое соединение',integrity:'Проверка файла'};
+    showDialog(result.ok?'Проверка прошла':'Проверка не прошла',`<div class="notice">${I(result.ok?'check':'alert')}<span>${result.ok?`HTTPS и запись на диск работают. Сохранено ${humanBytes(result.received)}, SHA-256 совпал.`:`${esc(stages[result.stage]||'Загрузка')}: ${esc(result.message)}`}</span></div><p class="muted small">Тест использует небольшой публичный HTTPS-файл и не проверяет наличие участников конкретной раздачи.</p><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ДИАГНОСТИКА'});
+   }finally{b.disabled=false;}
+   return;
+  }
+  case 'download-op':{
+   if(d.op==='folder')return api.revealDownload(d.id);
+   if(d.op==='report'){await api.copyDownloadReport(d.id);toast('Отчёт без пути, названия и ссылки скопирован.');return;}
+   await api.downloadAction(d.id,d.op);return refreshDownloads(renderId);
+  }
   case 'source-audit':return showSourceAudit();
   case 'source-retry':{
    if(!api.retrySourceLists)return;
@@ -537,8 +596,21 @@ async function dispatch(b){
   case 'source-replace-commit':{b.disabled=true;try{await api.replaceSource(d.sourceId,d.id);dialog.close();toast('Список источника заменён.');return render();}finally{b.disabled=false;}}
   case 'source-op':if(d.op==='replace')return replaceSourceDialog(d.id);if(d.op==='remove')return confirmDialog('Удалить источник?','Он исчезнет из поиска и карточек. Файлы не будут затронуты.',async()=>{await api.sourceAction(d.id,d.op);await render();});return api.sourceAction(d.id,d.op).then(()=>render());
   case 'source-links':{const game=shownSourceGames[Number(d.index)];if(game)return openCatalogGame({title:game.title,preferred:game});break;}
+  case 'release-notes':return showDialog('Что нового в ByAzen 1.0.22',`<ul class="release-list"><li><strong>Загрузки:</strong> отдельная история, скорость, время до завершения и диагностика BitTorrent.</li><li><strong>Очередь:</strong> расписание, лимиты, приоритет и до четырёх задач одновременно.</li><li><strong>Проверки:</strong> тест HTTPS, свободное место, SHA-256 и обезличенные отчёты.</li><li><strong>Библиотека и темы:</strong> заметки, статусы игр, личные оценки и закладки на темы.</li></ul><div class="dialog-actions">${btn('Закрыть','close','','primary')}</div>`,{eyebrow:'ЖУРНАЛ ОБНОВЛЕНИЯ'});
   case 'settings-jump':{const target=document.getElementById(d.target);target?.focus({preventScroll:true});target?.scrollIntoView({behavior:motionAllowed()?'smooth':'instant'});return;}
   case 'theme-preview':return previewTheme(d.themeId);
+  case 'theme-favorite':{
+   const theme=getTheme(d.themeId);if(!theme.asset)return;
+   const favorites=new Set(state.settings.favoriteThemes||[]),was=favorites.delete(theme.id);
+   if(!was)favorites.add(theme.id);
+   b.disabled=true;
+   try{
+    state.settings=await api.saveSettings({...state.settings,favoriteThemes:[...favorites]});
+    b.setAttribute('aria-pressed',String(!was));$('span',b).textContent=was?'В избранное':'В избранном';
+    if($('#themes'))drawThemeResults();
+   }finally{b.disabled=false;}
+   return;
+  }
   case 'theme-custom':return customWallpaperDialog();
   case 'theme-custom-disable':{
    if(!state.wallpaper?.enabled)return;
@@ -551,7 +623,7 @@ async function dispatch(b){
    return;
   }
   case 'theme-random':{
-   const candidates=findThemes(state.themeGroup,state.themeQuery).filter(t=>t.id!==state.settings.theme);
+   const candidates=filteredThemes().filter(t=>t.id!==state.settings.theme);
    const pool=candidates.length?candidates:visualThemes.filter(t=>t.id!==state.settings.theme);
    return previewTheme(pool[Math.floor(Math.random()*pool.length)].id);
   }
@@ -573,4 +645,4 @@ $('#source-shortcut').innerHTML=I('layers');$('#filter-shortcut').innerHTML=I('s
 $('#global-search').onsubmit=e=>{e.preventDefault();state.filter={...state.filter,term:$('#global-input').value,page:1};go('catalog');};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'&&!dialog.open){e.preventDefault();$('#global-input').focus();}});
 api.onStorageError?.(text=>toast('Не удалось сохранить данные: '+text,true));
-run(async()=>{try{state.settings=await api.settings();setWallpaper(await readWallpaper().catch(()=>null));applyTheme();state.library=await api.library();}finally{sidebar();await render();}});
+run(async()=>{try{state.settings=await api.settings();setWallpaper(await readWallpaper().catch(()=>null));applyTheme();state.library=await api.library();}finally{const start=state.settings.startSection;if(start&&start!=='home'&&Object.hasOwn(sections,start))go(start);else{sidebar();await render();}}});

@@ -5,6 +5,7 @@ const {isIP}=require('node:net');
 const {pipeline}=require('node:stream/promises');
 const {isPublic,publicAddress}=require('./net.cjs');
 const {sourceLink}=require('./sources.cjs');
+const {ensureSpace,issue}=require('./transfer-policy.cjs');
 
 const reserved=/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i;
 function magnetV1(raw){
@@ -46,11 +47,7 @@ async function prepareMagnet(raw, lookup=publicAddress){
  // magnet-uri expects raw numeric x.pe addresses, not percent-encoded values.
  return base+[...new Set(approved.filter(Boolean))].map(tracker=>'&tr='+encodeURIComponent(tracker)).join('')+direct.map(peer=>'&x.pe='+peer).join('');
 }
-function metadataError(connected){
- return Error(connected
-  ? 'Участники подключались, но не передали метаданные. Повторите попытку или выберите другую раздачу.'
-  : 'Не удалось подключиться к участникам раздачи. Проверьте сеть или выберите другой источник или версию.');
-}
+const metadataError=connected=>issue(connected?'TORRENT_NO_METADATA':'TORRENT_NO_PEERS');
 function filePlan(files){
  if(!files.length||files.length>15000)throw Error('Некорректное количество файлов в торренте.');
  const named=new Set(), dirs=new Set();
@@ -82,12 +79,13 @@ async function publish(job,files,signal){
   }
   signal.throwIfAborted();
   const current=await fsp.lstat(job.file).catch(e=>{if(e.code!=='ENOENT')throw e;});
-  if(current)throw Error('Папка назначения уже существует.');
+  if(current)throw issue('EEXIST');
   await fsp.rename(stage,job.file);
  }finally{await fsp.rm(stage,{recursive:true,force:true});}
 }
-async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000,pieceIdleMs=180000}={}){
+async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000,pieceIdleMs=180000,stats={},receiveLimit=0,sendLimit=128*1024,checkSpace=ensureSpace}={}){
  const uri=await pin(job.url);
+ Object.assign(stats,{trackers:new URL(uri).searchParams.getAll('tr').length,trackerReplies:0,peers:0,peakPeers:0,dht:false});
  signal.throwIfAborted();
  const Client=engine||(await import('webtorrent')).default;
  const Store=storage||(await import('fs-chunk-store')).default;
@@ -100,7 +98,7 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
  // The chunk store never touches paths provided by peers. Valid paths are restored only after verification.
  class FlatStore extends Store{constructor(piece,{length}){super(piece,{path:blocks,length});}}
  signal.throwIfAborted();
- const client=new Client({tracker:{},natUpnp:false,natPmp:false,lsd:false,utPex:false,webSeeds:false,utp:false,maxConns:35,seedOutgoingConnections:false,uploadLimit:128*1024});
+ const client=new Client({tracker:{},natUpnp:false,natPmp:false,lsd:false,utPex:false,webSeeds:false,utp:false,maxConns:35,seedOutgoingConnections:false,uploadLimit:sendLimit,downloadLimit:receiveLimit||-1});
  client.blocked={contains:host=>!isPublic(host)};
  let cleanupWait=null, torrent, finished=false, failure;
  const onFail=e=>{failure?.(e);};
@@ -117,30 +115,43 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
    signal.addEventListener('abort',abort,{once:true});
    const timeout=setTimeout(()=>reject(metadataError(connected)),metadataTimeout);
    timeout.unref();
-   let pieceIdle;
+   let pieceIdle, validated=Promise.resolve();
    function watchPieces(){
     clearTimeout(pieceIdle);
-    pieceIdle=setTimeout(()=>reject(Object.assign(Error('После получения метаданных за 3 минуты не поступили данные. Нажмите «Повторить», чтобы продолжить, или выберите другую раздачу.'),{code:'TORRENT_STALLED'})),pieceIdleMs);
+    pieceIdle=setTimeout(()=>reject(issue('TORRENT_STALLED')),pieceIdleMs);
     pieceIdle.unref();
    }
    cleanupWait=()=>{clearTimeout(timeout);clearTimeout(pieceIdle);signal.removeEventListener('abort',abort);};
    if(signal.aborted){abort();return;}
-   torrent=client.add(uri,{store:FlatStore,storeCacheSlots:8});
+   torrent=client.add(uri,{store:FlatStore,storeCacheSlots:8,deselect:true});
    torrent.on('error',onFail);
-   torrent.once('wire',()=>{
-    connected=true;
+   torrent.on('trackerAnnounce',()=>{stats.trackerReplies++;});
+   torrent.on('dhtAnnounce',()=>{stats.dht=true;});
+   torrent.on('wire',wire=>{
+    connected=true;stats.peers=torrent.numPeers||1;stats.peakPeers=Math.max(stats.peakPeers,stats.peers);
+    wire?.once?.('close',()=>{stats.peers=torrent.numPeers||0;});
     if(job.phase==='metadata'){job.phase='waiting-metadata';persist();}
    });
    torrent.once('metadata',()=>{
     clearTimeout(timeout);
-    try{filePlan(torrent.files);job.phase='pieces';track();persist();}
-    catch(e){reject(e);}
+    validated=Promise.resolve().then(async()=>{
+     filePlan(torrent.files);
+     if(torrent.length>0){
+      // Space for pending blocks plus a second copy while publishing across files.
+      const allocated=previous?.blocks>0?Math.min(torrent.length,previous.blocks*512):0;
+      await checkSpace(path.dirname(job.file||job.partial),torrent.length*2-allocated);
+     }
+    });
+    validated.catch(reject);
    });
-   // Wait for ready: loading an existing partial store can take time and
-   // should not count as time waiting for data from the network.
-   torrent.once('ready',watchPieces);
+   torrent.once('ready',()=>validated.then(()=>{
+    if(signal.aborted||torrent.destroyed)return;
+    job.phase='pieces';track();persist();
+    if(torrent.pieces?.length)torrent.select(0,torrent.pieces.length-1);
+    watchPieces();
+   },reject));
    torrent.on('download',()=>{track();if(pieceIdle)watchPieces();});
-   torrent.once('done',()=>{clearTimeout(pieceIdle);pieceIdle=undefined;resolve();});
+   torrent.once('done',()=>validated.then(()=>{clearTimeout(pieceIdle);pieceIdle=undefined;resolve();},reject));
   });
   signal.throwIfAborted();track();
   job.phase='saving';persist();

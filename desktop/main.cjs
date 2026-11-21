@@ -1,4 +1,4 @@
-const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session} = require('electron');
+const {app, BrowserWindow, protocol, net, ipcMain, shell, dialog, session, clipboard} = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const {randomUUID} = require('node:crypto');
@@ -9,6 +9,8 @@ const {webURL} = require('../core/net.cjs');
 const {cleanGame,launchGame,prepareLaunch} = require('../core/library.cjs');
 const {DownloadQueue,nameFromURL} = require('../core/downloads.cjs');
 const {magnetV1}=require('../core/torrent.cjs');
+const {transferOptions,cleanHash}=require('../core/transfer-policy.cjs');
+const {checkDownload}=require('../core/download-check.cjs');
 const {readState,saveState,sourcesSummary,searchSources,availability,updateSettings,sourceMatches,readSourceGame} = require('../core/state.cjs');
 
 const {auditSources}=require('../core/source-audit.cjs');
@@ -26,7 +28,9 @@ async function bootstrap() {
   const data = readState(file);
   const persist = () => {try { saveState(file,data); } catch (e) { console.error('State:',e.message); window?.webContents.send('storage-error',e.message); }};
   let window;
-  const queue = new DownloadQueue(data.downloads,persist);
+  const queue = new DownloadQueue(data.downloads,persist,{options:data.downloadOptions});
+  app.once('before-quit',()=>queue.dispose());
+  let downloadCheck;
   const previews = new Map(), exeTokens = new Map();
   function token(map,value) { const id = randomUUID(); map.set(id,value); if (map.size > 6) map.delete(map.keys().next().value); return id; }
   const find = (list,id) => { const value = list.find(x => x.id === id); if (!value) throw Error('Запись не найдена.'); return value; };
@@ -114,7 +118,7 @@ async function bootstrap() {
       const url = sourceLink(src.games[index]?.links[linkIndex]);
       if (url !== expected) throw Error('Источник изменился. Откройте ссылку повторно.');
       if (action !== 'download') throw Error('Неподдерживаемое действие.');
-      return addDownload(url,src.games[index].title);
+      return addDownload(url,src.games[index].title,src.name);
     },
     library: () => data.library,
     chooseExe: async () => {
@@ -138,19 +142,42 @@ async function bootstrap() {
       if (!Number.isInteger(profile) || profile < -1 || profile >= g.profiles.length) throw Error('Профиль не найден.');
       await launchGame(g.exe,g.profiles[profile]?.args || []); g.lastPlayed = new Date().toISOString(); persist();
     },
-    downloads: () => queue.list(), addDownload: raw => addDownload(sourceLink(raw)),
+    downloads: () => queue.list(),
+    downloadInfo: () => ({items:queue.list(),options:data.downloadOptions,allowed:queue.allowed(),version:app.getVersion()}),
+    saveDownloadOptions: raw => {
+      data.downloadOptions=transferOptions(raw);persist();queue.configure(data.downloadOptions);
+      return data.downloadOptions;
+    },
+    checkDownload: () => downloadCheck||=(async()=>{
+      const {filePaths:[folder]}=await dialog.showOpenDialog(window,{title:'Куда записать временный тестовый файл?',defaultPath:app.getPath('downloads'),properties:['openDirectory']});
+      return folder?await checkDownload(folder):null;
+    })().finally(()=>{downloadCheck=null;}),
+    copyDownloadReport: id => {
+      clipboard.writeText(JSON.stringify({application:'ByAzen',version:app.getVersion(),...queue.report(id)},null,2));
+    },
+    revealDownload: async id => {
+      const {file}=queue.find(id);
+      if(typeof file!=='string'||!path.isAbsolute(file))throw Error('Папка назначения недоступна.');
+      const target=await fs.lstat(file).catch(()=>null);
+      if(target){shell.showItemInFolder(file);return;}
+      const parent=path.dirname(file);
+      if(!(await fs.lstat(parent).catch(()=>null))?.isDirectory())throw Error('Папка назначения не найдена.');
+      if(await shell.openPath(parent))throw Error('Windows не открыла папку назначения.');
+    },
+    addDownload: (raw,sha256) => addDownload(sourceLink(raw),'','',cleanHash(sha256)),
     downloadAction: (id,op) => queue.action(id,op)
   };
-  async function addDownload(url,title) {
+  async function addDownload(url,title,source,sha256){
     if(url.startsWith('magnet:')){
+      if(sha256)throw Error('Для magnet используется встроенная проверка частей. Поле SHA-256 предназначено для HTTP(S)-файла.');
       const {xt}=magnetV1(url);
       const label=title||new URL(url).searchParams.get('dn')||`Torrent ${xt.slice(9,17)}`;
       const {filePaths:[folder]}=await dialog.showOpenDialog(window,{title:'Выберите папку для загрузки BitTorrent',defaultPath:app.getPath('downloads'),properties:['openDirectory','createDirectory']});
       if(!folder)return false;
-      queue.addTorrent(url,folder,label);return true;
+      queue.addTorrent(url,folder,label,source);return true;
     }
-    const {filePath} = await dialog.showSaveDialog(window,{defaultPath:path.join(app.getPath('downloads'),nameFromURL(url))});
-    if (filePath) { queue.add(url,filePath,{expectFile:Boolean(title)}); return true; } return false;
+    const {filePath}=await dialog.showSaveDialog(window,{defaultPath:path.join(app.getPath('downloads'),nameFromURL(url))});
+    if(filePath){queue.add(url,filePath,{expectFile:Boolean(title),origin:source,sha256});return true;}return false;
   }
   function stash(parsed,metadata) { const id = token(previews,{...parsed,...metadata}); return {id,name:parsed.name,count:parsed.games.length,skipped:parsed.skipped,ignoredLinks:parsed.ignoredLinks,titles:parsed.games.slice(0,10).map(g=>g.title)}; }
   protocol.handle('byazen', req => {
