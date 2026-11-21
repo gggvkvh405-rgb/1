@@ -48,3 +48,13 @@ test('existing files are not overwritten and queued jobs are paused on restart',
  q.add('https://example.com/new',p);await until(()=>items[0].status==='error');assert.equal(await fs.readFile(p,'utf8'),'Keep');
  const pre=[{status:'running'},{status:'queued'},{status:'done'}];new DownloadQueue(pre,()=>{});assert.deepEqual(pre.map(j=>j.status),['paused','paused','done']);
 });
+test('a game link returning a website instead of a file is not marked complete',async t=>{
+ const dir=await root(t),items=[];const file=path.join(dir,'archive');
+ const q=new DownloadQueue(items,()=>{},{fetch:async()=>({res:response(200,{'content-type':'Text/HTML; charset=UTF-8'},'<html>Login</html>')})});
+ q.add('https://example.com/landing',file,{expectFile:true});
+ await until(()=>items[0].status==='error');
+ assert.match(items[0].error,/страницу вместо файла/);await assert.rejects(fs.stat(file));
+ q.add('https://example.com/landing',path.join(dir,'manual.html'));
+ await until(()=>items[0].status==='done');
+ assert.equal(await fs.readFile(path.join(dir,'manual.html'),'utf8'),'<html>Login</html>');
+});

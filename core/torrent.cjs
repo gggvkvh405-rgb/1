@@ -86,7 +86,7 @@ async function publish(job,files,signal){
   await fsp.rename(stage,job.file);
  }finally{await fsp.rm(stage,{recursive:true,force:true});}
 }
-async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000}={}){
+async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMagnet,metadataTimeout=90000,pieceIdleMs=180000}={}){
  const uri=await pin(job.url);
  signal.throwIfAborted();
  const Client=engine||(await import('webtorrent')).default;
@@ -117,7 +117,13 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
    signal.addEventListener('abort',abort,{once:true});
    const timeout=setTimeout(()=>reject(metadataError(connected)),metadataTimeout);
    timeout.unref();
-   cleanupWait=()=>{clearTimeout(timeout);signal.removeEventListener('abort',abort);};
+   let pieceIdle;
+   function watchPieces(){
+    clearTimeout(pieceIdle);
+    pieceIdle=setTimeout(()=>reject(Object.assign(Error('После получения метаданных за 3 минуты не поступили данные. Нажмите «Повторить», чтобы продолжить, или выберите другую раздачу.'),{code:'TORRENT_STALLED'})),pieceIdleMs);
+    pieceIdle.unref();
+   }
+   cleanupWait=()=>{clearTimeout(timeout);clearTimeout(pieceIdle);signal.removeEventListener('abort',abort);};
    if(signal.aborted){abort();return;}
    torrent=client.add(uri,{store:FlatStore,storeCacheSlots:8});
    torrent.on('error',onFail);
@@ -130,8 +136,11 @@ async function torrentDownload(job,signal,persist,{engine,storage,pin=prepareMag
     try{filePlan(torrent.files);job.phase='pieces';track();persist();}
     catch(e){reject(e);}
    });
-   torrent.on('download',track);
-   torrent.once('done',resolve);
+   // Wait for ready: loading an existing partial store can take time and
+   // should not count as time waiting for data from the network.
+   torrent.once('ready',watchPieces);
+   torrent.on('download',()=>{track();if(pieceIdle)watchPieces();});
+   torrent.once('done',()=>{clearTimeout(pieceIdle);pieceIdle=undefined;resolve();});
   });
   signal.throwIfAborted();track();
   job.phase='saving';persist();

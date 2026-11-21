@@ -150,7 +150,7 @@ async function bootstrap() {
       queue.addTorrent(url,folder,label);return true;
     }
     const {filePath} = await dialog.showSaveDialog(window,{defaultPath:path.join(app.getPath('downloads'),nameFromURL(url))});
-    if (filePath) { queue.add(url,filePath); return true; } return false;
+    if (filePath) { queue.add(url,filePath,{expectFile:Boolean(title)}); return true; } return false;
   }
   function stash(parsed,metadata) { const id = token(previews,{...parsed,...metadata}); return {id,name:parsed.name,count:parsed.games.length,skipped:parsed.skipped,ignoredLinks:parsed.ignoredLinks,titles:parsed.games.slice(0,10).map(g=>g.title)}; }
   protocol.handle('byazen', req => {

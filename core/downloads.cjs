@@ -33,12 +33,12 @@ class DownloadQueue {
     for (const j of items) if (['queued','running','pausing','canceling'].includes(j.status)) j.status = 'paused';
   }
   list() { return this.items.map(({url, partial, validator, ...shown}) => shown); }
-  add(raw, file) {
+  add(raw, file, {expectFile=false}={}) {
     const url = webURL(raw).href;
     if (this.items.length >= 200) throw Error('Удалите завершённые записи: в очереди уже 200 загрузок.');
     if (this.items.some(j => j.file.toLowerCase() === file.toLowerCase() && !['done','canceled'].includes(j.status))) throw Error('Этот путь уже используется.');
     const id = randomUUID();
-    this.items.unshift({id, url, file, title:path.basename(file), partial:path.join(path.dirname(file), `.byazen-${id}.part`), status:'queued', bytes:0, total:null, validator:'', error:''});
+    this.items.unshift({id, url, file, title:path.basename(file), partial:path.join(path.dirname(file), `.byazen-${id}.part`), status:'queued', bytes:0, total:null, validator:'', error:'', ...(expectFile?{expectFile:true}:{})});
     this.persist(); this.pump();
   }
   addTorrent(url,parent,label){
@@ -91,6 +91,8 @@ class DownloadQueue {
     try {
       signal.throwIfAborted();
       info = rangeInfo(res.statusCode,res.headers,offset);
+      const contentType=String(res.headers['content-type']||'').split(';')[0].trim().toLowerCase();
+      if(j.expectFile&&['text/html','application/xhtml+xml'].includes(contentType))throw Error('Источник вернул веб-страницу вместо файла. Выберите другую ссылку или раздачу.');
       if (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity') throw Error('Сжатый ответ загрузки не поддерживается.');
       const nextValidator = validator(res.headers);
       if (info.append && ((nextValidator && nextValidator !== j.validator) || (j.total !== null && j.total !== info.total))) throw Error('Файл на сервере изменился.');

@@ -86,3 +86,65 @@ test('download reports whether a handshake occurred before metadata timed out',a
   assert.deepEqual(phases,connected?['metadata','waiting-metadata']:['metadata']);
  }
 });
+test('when pieces stop arriving the next queued job starts and partial data is retained for retry',async t=>{
+ const root=await temp(t), items=[];
+ const {EventEmitter}=require('node:events');
+ let attempts=0;
+ class FixtureClient extends EventEmitter{
+  add(){const tor=new EventEmitter();tor.files=[{path:'fixture.txt'}];tor.length=2;tor.downloaded=1;
+   queueMicrotask(()=>{tor.emit('metadata');tor.emit('ready');tor.emit('download');});return tor;}
+  destroy(done){done();}
+ }
+ const queue=new DownloadQueue(items,()=>{},{torrent:async (job,signal,persist)=>{
+  if(++attempts===1)return torrentDownload(job,signal,persist,{engine:FixtureClient,storage:class {},pieceIdleMs:25});
+ }});
+ queue.addTorrent(magnet,root,'Stalled');const first=items[0];
+ queue.addTorrent(magnet,root,'Next');const second=items[0];
+ await until(()=>second.status==='done');
+ assert.equal(first.status,'error');assert.match(first.error,/не поступили данные/);assert.equal(first.bytes,1);
+ assert.ok((await fsp.stat(first.partial)).isDirectory());
+});
+test('queue discovers its seed via a real UDP tracker and verifies the saved file', {timeout:15000},async t=>{
+ const root=await temp(t), {default:Client}=await import('webtorrent');
+ const {createSocket}=require('node:dgram'),{once}=require('node:events');
+ const tracker=createSocket('udp4');
+ tracker.bind(0,'127.0.0.1');await once(tracker,'listening');
+ const sender=new Client({tracker:false,dht:false,lsd:false,utPex:false,utp:false,natUpnp:false,natPmp:false});
+ try{
+  const content=Buffer.from('Local UDP discovery fixture\n'.repeat(6500));
+  const seeded=await new Promise((resolve,reject)=>{sender.once('error',reject);sender.seed(content,{name:'tracker-fixture.txt'},resolve);});
+  let announced=0;
+  tracker.on('message',(msg,remote)=>{
+   if(msg.length<16)return;
+   const action=msg.readUInt32BE(8);
+   const response=Buffer.alloc(action===0?16:26);
+   response.writeUInt32BE(action);msg.copy(response,4,12,16);
+   if(action===0)response.writeBigUInt64BE(1n,8);
+   else if(action===1&&msg.length>=98&&msg.subarray(16,36).toString('hex')===seeded.infoHash){
+    announced++;response.writeUInt32BE(60,8);response.writeUInt32BE(1,16);
+    response.set([127,0,0,1],20);response.writeUInt16BE(sender.torrentPort,24);
+   }else return;
+   tracker.send(response,remote.port,remote.address);
+  });
+  class LocalFixtureClient extends Client{
+   constructor(opts){super({...opts,dht:false});}
+   set blocked(_){} get blocked(){return {contains:host=>host!=='127.0.0.1'};}
+  }
+  const uri=new URL(seeded.magnetURI), port=tracker.address().port;
+  uri.searchParams.set('tr',`udp://tracker.example:${port}/announce`);
+  const items=[];
+  const queue=new DownloadQueue(items,()=>{},{torrent:(job,signal,persist)=>torrentDownload(job,signal,persist,{
+   engine:LocalFixtureClient,metadataTimeout:4000,pieceIdleMs:4000,
+   pin:async raw=>(await prepareMagnet(raw,()=>({address:'1.1.1.1',family:4}))).replace('1.1.1.1','127.0.0.1')
+  })});
+  queue.addTorrent(uri.href,root,'UDP fixture');
+  const job=items[0];
+  for(let i=0;i<100&&!['done','error'].includes(job.status);i++)await wait(75);
+  assert.equal(job.status,'done',job.error);assert.ok(announced>0);
+  assert.ok((await fsp.readFile(path.join(job.file,'tracker-fixture.txt'))).equals(content),'saved bytes must match the seed');
+  assert.equal(queue.list()[0].bytes,content.length);
+ }finally{
+  await new Promise(resolve=>sender.destroy(resolve));
+  await new Promise(resolve=>tracker.close(resolve));
+ }
+});
