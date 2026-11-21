@@ -64,7 +64,7 @@ test('path repair is preview-only until confirmation and rejects stale plans',as
  const nextExe=path.join(sub,'fixture.exe');await fs.writeFile(nextExe,'file');const oldExe=path.join(former,'Group','fixture.exe'),rows=[{id:'g',title:'Fixture',exe:oldExe},{id:'v',title:'Missing',exe:path.join(former,'missing.exe')},{id:'x',title:'Other',exe:path.join(root,'before2','fixture.exe')}];
  const plan=await prepareMove(rows,former,next);assert.equal(rows[0].exe,oldExe);assert.equal(plan.skipped,1);assert.equal(plan.moves.length,1);
  await fs.rename(nextExe,nextExe+'.bak');await assert.rejects(applyMove(rows,plan));assert.equal(rows[0].exe,oldExe);
- await fs.rename(nextExe+'.bak',nextExe);assert.deepEqual(await applyMove(rows,plan),{updated:1});assert.equal(rows[0].exe,nextExe);await assert.rejects(applyMove(rows,plan),/изменилась/);
+ await fs.rename(nextExe+'.bak',nextExe);assert.deepEqual(await applyMove(rows,plan),{updated:1});assert.equal(rows[0].exe,await fs.realpath(nextExe));await assert.rejects(applyMove(rows,plan),/изменилась/);
 });
 test('screenshots are scoped to the chosen directory and rechecked before reading',async t=>{
  const folder=await temp(t),shot=path.join(folder,'shot.png');const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7ycAAAAASUVORK5CYII=','base64');
