@@ -1,3 +1,4 @@
+import {searchSources,availability,sourceMatches} from './source-search.js';
 const read = () => {try {return JSON.parse(localStorage.getItem('byazen-preview-v1')) || {};} catch {return {};}};
 const store = read();
 store.settings ||= {name:'Игрок',theme:'dark',motion:false,region:'DE'};
@@ -26,7 +27,6 @@ async function fetchSource(url) {
  while (true) {const {done,value} = await reader.read(); if(done) break; size+=value.length; if(size>4194304){await reader.cancel(); throw Error('Размер ответа превышает 4 МБ.');} text+=decoder.decode(value,{stream:true});}
  return text+decoder.decode();
 }
-const key = s => s.replace(/[™®©]/gu,'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 const ext = url => { window.open(url,'_blank','noopener,noreferrer'); };
 export const browser = {
  settings:async()=>store.settings, saveSettings:async x=>{store.settings=x; save(); return x;},
@@ -43,17 +43,9 @@ export const browser = {
  importSource:async id=>{if(store.sources.length>=20)throw Error('Можно добавить до 20 источников.'); if(!drafts.has(id))throw Error('Откройте предпросмотр повторно.');store.sources.push({...drafts.get(id),id:crypto.randomUUID(),enabled:true,updated:new Date().toISOString()});save();drafts.delete(id);},
  sources:async()=>store.sources.map(({games,...r})=>({...r,count:games.length})),
  sourceAction:async(id,op)=>{const s=store.sources.find(x=>x.id===id);if(op==='toggle')s.enabled=!s.enabled;else if(op==='remove')store.sources=store.sources.filter(s=>s.id!==id);else if(s.kind==='url')Object.assign(s,await api('source',await fetchSource(s.url)),{updated:new Date().toISOString()});else throw Error('Для обновления файла удалите запись и импортируйте файл повторно, либо используйте настольное приложение.');save();},
- searchSources:async(q='',page=1)=>{ const games=store.sources.filter(s=>s.enabled).flatMap(s=>s.games.map((g,index)=>({...g,source:s.name,id:s.id,index}))).filter(g=>g.title.toLowerCase().includes(q.toLowerCase().trim()));return {games:games.slice((page-1)*16,page*16),total:games.length,page,pageSize:16};},
- availability:async titles=>titles.map(title=>({title,sources:store.sources.filter(s=>s.enabled&&s.games.some(g=>key(g.title)===key(title))).map(s=>s.name)})),
- sourceMatches:async title=>{
-  const k=typeof title==='string'&&title.length<=200?key(title):'';
-  if(!k)return [];
-  return store.sources.filter(s=>s.enabled).flatMap(s=>{
-   const entries=[];let count=0;
-   s.games.forEach((g,index)=>{if(key(g.title)===k&&g.links.length){count++;if(entries.length<20)entries.push({index,title:g.title,size:g.size,date:g.date,linkCount:g.links.length});}});
-   return count?[{id:s.id,name:s.name,entries,count}]:[];
-  });
- },
+ searchSources:async (q,page)=>searchSources(store.sources,q,page),
+ availability:async titles=>availability(store.sources,titles),
+ sourceMatches:async title=>sourceMatches(store.sources,title),
  sourceGame:async(id,index,title)=>{
   const s=store.sources.find(x=>x.enabled&&x.id===id), g=Number.isSafeInteger(index)&&index>=0?s?.games[index]:null;
   if(!g||g.title!==title||!g.links.length)throw Error('Источник изменился или отключён. Откройте игру повторно.');

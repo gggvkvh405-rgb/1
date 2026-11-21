@@ -29,5 +29,4 @@ function parseSource(input, {maxBytes=MAX_JSON,maxEntries=10000}={}) {
   }
   return {name: line(input.name, 100), games, skipped, ignoredLinks};
 }
-function gameKey(s) { return s.replace(/[™®©]/gu, '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); }
-module.exports = {parseSource, sourceLink, MAX_JSON, gameKey};
+module.exports = {parseSource, sourceLink, MAX_JSON};

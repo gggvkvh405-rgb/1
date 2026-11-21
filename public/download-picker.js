@@ -14,7 +14,7 @@ export function describeLink(raw){
  return {label:'Неизвестная ссылка',detail:'Формат не поддерживается',supported:false};
 }
 
-export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,isCurrent}){
+export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdded,onSearch,isCurrent}){
  const art=product.image?`<img alt="" src="${esc(product.image)}">`:'';
  showDialog(esc(product.title),`<div class="download-picker"><header class="picker-banner"><span class="picker-cover">${I('game')}${art}</span><div><strong>Загрузка игры</strong><p>Выбери источник и версию. Файлы попадут в очередь ByAzen.</p></div></header><div class="picker-main" aria-busy="true"></div><footer class="picker-foot">${I('alert')}<span>Ссылки предоставлены сторонними источниками. Скачивай только то, чему доверяешь и на что у тебя есть право.</span></footer></div>`,{variant:'download',eyebrow:'ЦЕНТР ЗАГРУЗОК'});
  const view=dialog.querySelector('.download-picker'), main=view.querySelector('.picker-main');
@@ -43,8 +43,9 @@ export function openDownloadPicker(product,{api,dialog,showDialog,esc,date,onAdd
  }
  function showEmpty(message,title='Нет источников для этой игры'){
   main.setAttribute('aria-busy','false');
-  main.innerHTML=stateMarkup('search',title,message,`<div class="picker-state-actions"><button type="button" class="btn" id="picker-retry">${I('refresh')} Проверить снова</button><button type="button" class="btn" data-go="sources">${I('layers')} Источники</button></div>`);
+  main.innerHTML=stateMarkup('search',title,message,`<div class="picker-state-actions"><button type="button" class="btn" id="picker-retry">${I('refresh')} Проверить снова</button><button type="button" class="btn" data-go="sources">${I('layers')} Источники</button><button type="button" class="btn" id="picker-search">${I('search')} Поиск по названию</button></div>`);
   main.querySelector('#picker-retry').onclick=check;
+  main.querySelector('#picker-search').onclick=()=>{dialog.close();onSearch();};
   reveal(main,'.picker-state');
  }
  function mountSources(chosen){

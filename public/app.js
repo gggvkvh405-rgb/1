@@ -67,7 +67,7 @@ async function catalog(n){
  const f=state.filter, selected=String(f.tags||'').split(',').filter(Boolean);
  const liveFields=properties.map(([k,label,opts])=>`<label class="field"><span>${label}</span>${pick(k,opts,f[k]||'',label)}</label>`).join('');
  content.innerHTML=`<form id="catalog-form" class="catalog-layout ${catalogLocal.mobileOpen?'filters-open':''}">
- <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p></div>
+ <header class="catalog-top"><div><h1 class="sr-only">Каталог</h1><div class="catalog-total" id="catalog-total">Загружаем каталог Steam…</div><p id="catalog-hint">Используйте боковую панель для уточнения поиска</p>${f.term?.trim()?btn('Искать в источниках','search-sources','layers','catalog-source-search'):''}</div>
  <div class="catalog-sort"><label><span>Сортировать по</span>${pick('sort_by',sorts,f.sort_by||'','Сортировка')}</label><button type="button" class="btn catalog-mobile-toggle" data-action="catalog-toggle" aria-controls="catalog-filters" aria-expanded="${catalogLocal.mobileOpen}">${I('sliders')} Фильтры</button></div></header>
  <section id="catalog-results" class="catalog-results" aria-live="polite" aria-busy="true">${details('search','Загружаем каталог…','Получаем текущие данные магазина Steam.')}</section>
  <aside id="catalog-filters" class="catalog-filters" aria-label="Фильтры каталога"><div class="catalog-filter-scroll">
@@ -223,7 +223,7 @@ async function refreshDownloads(n){
 }
 setInterval(()=>{if(state.section==='downloads')refreshDownloads(renderId).catch(()=>{});},1000);
 async function sources(n){
- content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div id="sources-list"></div><div class="section-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div>`;
+ content.innerHTML=`${head('HYDRA JSON','Источники','Управляйте источниками загрузок или импортируйте свои списки.',btn('Из файла','source-file','file'))}<form class="pane source-import-pane" id="source-url-form"><h2>Добавить по ссылке</h2><label class="field" for="source-url-input"><span>Ссылка на Hydra JSON</span></label><div class="row source-import-controls"><input id="source-url-input" type="url" name="url" placeholder="https://example.org/source.json" maxlength="4096" required autocomplete="off" spellcheck="false" aria-describedby="source-url-help source-url-status"><button class="btn primary" type="submit">${I('link')} Предпросмотр</button></div><p id="source-url-help" class="muted small">Нужна ссылка на сам JSON, а не на страницу со списком источников.</p><p id="source-url-status" class="source-url-status small" role="status"></p></form><div class="notice">${I('alert')}<span>Источники предоставлены пользователем и не проверены ByAzen. Используйте только те, которым доверяете, и скачивайте только то, на что у вас есть право.</span></div><div class="section-heading" id="source-search-heading"><div><span class="section-icon">${I('search')}</span><h2>Игры в источниках</h2></div></div><form id="source-search" class="row"><input name="term" value="${esc(state.srcTerm)}" maxlength="200" placeholder="Поиск по названию" aria-label="Поиск по импортированным играм"><button class="btn" type="submit">${I('search')} Найти</button></form><div id="source-games" aria-live="polite"></div><div class="section-heading"><div><span class="section-icon">${I('layers')}</span><h2>Подключённые списки</h2></div></div><div id="sources-list"></div>`;
  const form=$('#source-url-form'), input=$('#source-url-input'), status=$('#source-url-status');
  form.onsubmit=async e=>{
   e.preventDefault();
@@ -266,15 +266,20 @@ async function loadSourceGames(n){
  if(state.srcPage>1 && !result.games.length){state.srcPage=1;return loadSourceGames(n);}
  shownSourceGames=result.games;
  let html=result.games.length?`<div class="item-list">${result.games.map((g,i)=>`<article class="list-item"><span class="list-icon">${I('game')}</span><div class="list-copy"><h3>${esc(g.title)}</h3><p>${[g.source,g.size,date(g.date)].filter(Boolean).map(esc).join(' · ')}</p></div><button class="btn" data-action="source-links" data-index="${i}">${I('link')} Ссылки (${g.links.length})</button></article>`).join('')}</div>${rangeButtons(result,'source')}`:'';
- if(!result.games.length && state.srcTerm)html=details('search','Ничего не найдено','Проверьте запрос и убедитесь, что нужный источник включён.');
+ if(!result.games.length && state.srcTerm)html=details('search','Ничего не найдено','Попробуйте часть названия или оригинальное название. Проверьте, что нужный источник включён и его список загрузился.');
  const target=$('#source-games');
  if(target._markup!==html){target.innerHTML=html;target._markup=html;reveal(target,'.item-list > .list-item,.empty','rise');}
 }
 function showSourcePreview(d){if(!d)return;showDialog('Предпросмотр источника',`<p><strong>${esc(d.name)}</strong> · ${d.count} записей</p><p class="muted">Пропущено записей: ${d.skipped}. Отклонено ссылок: ${d.ignoredLinks}.</p><ul class="preview-list">${d.titles.map(t=>`<li>${esc(t)}</li>`).join('')}</ul><div class="notice">${I('alert')}<span>Импортируйте источник, только если доверяете ему.</span></div><div class="dialog-actions"><button class="btn" data-action="close">Отмена</button><button class="btn primary" data-action="source-import" data-id="${esc(d.id)}">${I('check')} Импортировать</button></div>`);}
+function searchInSources(term){
+ state.srcTerm=String(term??'').trim().slice(0,200);state.srcPage=1;
+ go('sources');
+ queueMicrotask(()=>{const input=$('#source-search input');input?.focus({preventScroll:true});$('#source-search-heading')?.scrollIntoView({block:'start'});});
+}
 function openCatalogGame(product){
  if(!product)return;
  const version=renderId;
- openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
+ openDownloadPicker(product,{api,dialog,showDialog,esc,date,isCurrent:()=>current(version),onSearch:()=>searchInSources(product.title),onAdded:()=>{go('downloads');toast('Загрузка добавлена.');}});
 }
 const palettes=[['Аметист',263],['Океан',224],['Полярная ночь',193],['Мята',159],['Изумруд',138],['Лайм',80],['Янтарь',45],['Закат',23],['Рубин',355],['Орхидея',311]];
 const patterns=['Свечение','Горизонт','Сетка','Орбиты','Пунктир','Волны','Диагональ','Мозаика','Искры','Туман'];
@@ -330,6 +335,7 @@ function dispatch(b){
   case 'reset-filters':state.filter={term:'',page:1};Object.assign(catalogLocal,{min:FIRST_YEAR,max:LAST_YEAR,sources:[]});window.scrollTo(0,0);return render();
   case 'rerender':return render();
   case 'steam-page':state.filter.page=Number(d.page);window.scrollTo(0,0);return render();
+  case 'search-sources':return searchInSources(state.filter.term);
   case 'source-page':state.srcPage=Number(d.page);return loadSourceGames(renderId);
   case 'library-tab':state.libraryFilter=d.tab;return render();
   case 'new-game':return editGame();
